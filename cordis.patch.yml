@@ -1,0 +1,4 @@
+# dsh-auto-retry 的 patch 层：dsh plugin add 时自动并入 profile 的 cordis.patch.yml
+- insert:
+    - id: auto-retry
+      name: dsh-auto-retry
