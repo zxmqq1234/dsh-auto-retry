@@ -38,9 +38,16 @@ dsh 的失败分三种，插件给每一种配了对应的自动恢复手段：
 
 <img width="793" height="798" alt="image" src="https://github.com/user-attachments/assets/048775ea-fe1a-412c-8c02-23d49fbd8b07" />
 <img width="567" height="209" alt="image" src="https://github.com/user-attachments/assets/0f6bb0cf-a134-419c-a74f-8bd34fbf408b" />
-<img width="566" height="466" alt="image" src="https://github.com/user-attachments/assets/ec1b1920-e12c-4f78-9721-f1d168a1967a" />
-<img width="565" height="589" alt="image" src="https://github.com/user-attachments/assets/b0d76e71-3f38-406f-9b59-34ad2cec1257" />
-<img width="575" height="599" alt="image" src="https://github.com/user-attachments/assets/942679db-86d7-4c4f-9f6f-bd18c79de835" />
+
+<div style="display:flex; flex-direction:column; gap:12px; max-width:600px; margin:auto;">
+
+  <img src="https://github.com/user-attachments/assets/ec1b1920-e12c-4f78-9721-f1d168a1967a" style="width:100%; border-radius:12px;">
+
+  <img src="https://github.com/user-attachments/assets/b0d76e71-3f38-406f-9b59-34ad2cec1257" style="width:100%; border-radius:12px;">
+
+  <img src="https://github.com/user-attachments/assets/942679db-86d7-4c4f-9f6f-bd18c79de835" style="width:100%; border-radius:12px;">
+
+</div>
 
 
 
