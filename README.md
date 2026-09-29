@@ -38,18 +38,39 @@ dsh 的失败分三种，插件给每一种配了对应的自动恢复手段：
 
 <img width="793" height="798" alt="image" src="https://github.com/user-attachments/assets/048775ea-fe1a-412c-8c02-23d49fbd8b07" />
 
-<div style="display:flex; flex-direction:column; gap:12px; max-width:600px; margin:auto;">
+<div style="display: flex; flex-direction: column; gap: 16px; max-width: 100%;">
 
-  <div style="border:1px solid #ddd; border-radius:12px; padding:8px;">
-    <img src="https://github.com/user-attachments/assets/ec1b1920-e12c-4f78-9721-f1d168a1967a" style="width:100%; display:block; border-radius:8px;">
+  <!-- 格子 1 -->
+  <div style="border: 1px solid #d0d7de; border-radius: 8px; padding: 8px; background: #ffffff; text-align: center;">
+    <img 
+      width="566" 
+      height="466" 
+      alt="image" 
+      src="https://github.com/user-attachments/assets/ec1b1920-e12c-4f78-9721-f1d168a1967a" 
+      style="max-width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 4px;"
+    />
   </div>
 
-  <div style="border:1px solid #ddd; border-radius:12px; padding:8px;">
-    <img src="https://github.com/user-attachments/assets/b0d76e71-3f38-406f-9b59-34ad2cec1257" style="width:100%; display:block; border-radius:8px;">
+  <!-- 格子 2 -->
+  <div style="border: 1px solid #d0d7de; border-radius: 8px; padding: 8px; background: #ffffff; text-align: center;">
+    <img 
+      width="565" 
+      height="589" 
+      alt="image" 
+      src="https://github.com/user-attachments/assets/b0d76e71-3f38-406f-9b59-34ad2cec1257" 
+      style="max-width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 4px;"
+    />
   </div>
 
-  <div style="border:1px solid #ddd; border-radius:12px; padding:8px;">
-    <img src="https://github.com/user-attachments/assets/942679db-86d7-4c4f-9f6f-bd18c79de835" style="width:100%; display:block; border-radius:8px;">
+  <!-- 格子 3 -->
+  <div style="border: 1px solid #d0d7de; border-radius: 8px; padding: 8px; background: #ffffff; text-align: center;">
+    <img 
+      width="575" 
+      height="599" 
+      alt="image" 
+      src="https://github.com/user-attachments/assets/942679db-86d7-4c4f-9f6f-bd18c79de835" 
+      style="max-width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 4px;"
+    />
   </div>
 
 </div>
