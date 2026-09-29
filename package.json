@@ -49,7 +49,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && node --test scripts/plugin.test.mjs"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4"

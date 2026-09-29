@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom/client'
+import { createPortal } from 'react-dom'
 import { Checkbox, Input, SegmentedControl, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /** 插件版本号：构建时由 scripts/build.mjs 从 package.json 的 version 注入。 */
@@ -127,6 +127,8 @@ type StatsRange = 0 | 1 | 7 | 30
 interface ProviderStrategyRow {
   name: string
   retryText: string
+  backoffText: string
+  codesText: string
   timeoutText: string
 }
 
@@ -303,11 +305,14 @@ const ZH: Record<string, unknown> = {
   builtInDescription: '以下为各 provider 当前生效的内置重试策略（由内置 llm-retry 插件执行，本插件在其耗尽后追加）：',
   builtInProvider: 'provider',
   builtInRetry: '重试',
+  builtInBackoff: '退避',
+  builtInCodes: '重试码',
   builtInIdleTimeout: '流空闲超时',
   builtInNotFound: '未找到 provider 配置',
   builtInAlways: 'always 无限重试',
   builtInNormal: 'normal {count} 次',
   builtInDefault: '默认（normal 5 次）',
+  builtInAnyFailure: '所有请求错误',
   builtInDefaultTimeout: '默认 300 秒',
   dashboardTitle: '数据看板',
   dashboardToday: '今天',
@@ -385,15 +390,11 @@ const EN: Record<string, unknown> = {
   requestRetry: 'Supplemental request retry',
   autoContinue: 'Turn-level auto-continue',
   continueDelay: 'Delay before continuing',
-  continueDelayHint: 'Time to wait before an automatic continuation.',
   maxConsecutive: 'Consecutive failure limit',
-  maxConsecutiveHint: 'Stop automatic continuation after this many consecutive failures; reset after a successful turn.',
   continueMessage: 'Continuation message',
-  continueMessageHint: 'Sent to the model as a user message.',
   idleWatchdog: 'No-response watchdog',
   idleTimeout: 'No-response threshold',
   watchdogHint: 'If a running turn has no stream output or event for longer than this threshold, cancel the request and auto-continue; consider the upstream stream idle timeout.',
-  subAgentHint: 'The main agent takes over after a sub-agent failure; no automatic continuation is performed.',
   backoffInitial: 'Initial backoff',
   backoffMax: 'Backoff maximum',
   backoffHint: 'Exponential backoff doubles each interval (initial ×2ⁿ, capped); fixed interval waits the same amount each time. Both respect 429 Retry-After and add ±10% jitter.',
@@ -435,11 +436,14 @@ const EN: Record<string, unknown> = {
   builtInDescription: 'The currently effective built-in retry strategy for each provider (executed by the built-in llm-retry plugin; this plugin adds retries after it is exhausted):',
   builtInProvider: 'Provider',
   builtInRetry: 'Retries',
+  builtInBackoff: 'Backoff',
+  builtInCodes: 'Retryable codes',
   builtInIdleTimeout: 'Stream idle timeout',
   builtInNotFound: 'No provider configuration found',
   builtInAlways: 'always (unlimited)',
   builtInNormal: 'normal ({count} retries)',
   builtInDefault: 'Default (normal, 5 retries)',
+  builtInAnyFailure: 'All request failures',
   builtInDefaultTimeout: 'Default (300 seconds)',
   dashboardTitle: 'Dashboard',
   dashboardToday: 'Today',
@@ -571,7 +575,7 @@ const STYLES = `
 .dshar-summary { cursor: pointer; font-size: 14px; font-weight: 600; }
 .dshar-explanation { margin: 0; padding-left: 20px; line-height: 1.55; }
 .dshar-provider-list { display: flex; flex-direction: column; gap: 8px; }
-.dshar-provider-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(160px, 1fr) minmax(140px, 1fr); gap: 10px; padding: 7px 0; border-top: 1px solid var(--dsw-border-subtle, currentColor); font-size: 12px; }
+.dshar-provider-row { display: grid; grid-template-columns: minmax(120px, 1fr) repeat(4, minmax(150px, 1fr)); gap: 10px; padding: 7px 0; border-top: 1px solid var(--dsw-border-subtle, currentColor); font-size: 12px; }
 .dshar-provider-row:first-child { border-top: 0; }
 .dshar-muted { opacity: .7; }
 .dshar-segmented { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
@@ -641,6 +645,7 @@ function normalizeConfig(value: AutoRetryConfig | undefined): AutoRetryConfig {
   })
   return {
     enabled: typeof source.enabled === 'boolean' ? source.enabled : DEFAULT_CONFIG.enabled,
+    notify: typeof source.notify === 'boolean' ? source.notify : DEFAULT_CONFIG.notify,
     rules,
     mainAgent: {
       requestRetry: typeof source.mainAgent?.requestRetry === 'boolean' ? source.mainAgent.requestRetry : DEFAULT_CONFIG.mainAgent.requestRetry,
@@ -758,10 +763,21 @@ function readProviderStrategies(describe: ConfigDescribe, t: (key: string) => st
             ? t('builtInAlways')
             : formatMessage(t('builtInNormal'), { count: displayInteger(policy.maxRetries, 5) })
           : t('builtInDefault')
+        const backoff = policy?.backoff
+        const backoffText = backoff
+          ? `${displayInteger(backoff.initialDelayMs, 500) / 1000}–${displayInteger(backoff.maxDelayMs, 10000) / 1000}s / ±${Math.round(displayNumber(backoff.jitterRatio, 0.1) * 100)}%`
+          : '0.5–10s / ±10%'
+        const retryableCodes = policy?.mode === 'always'
+          ? [t('builtInAnyFailure')]
+          : Array.isArray(policy?.retryableCodes)
+            ? policy.retryableCodes.filter((code): code is string => typeof code === 'string')
+            : ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT']
         const timeout = displayInteger(provider.streamIdleTimeoutMs, 0)
         rows.push({
           name: typeof provider.displayName === 'string' && provider.displayName ? provider.displayName : key,
           retryText,
+          backoffText,
+          codesText: retryableCodes.join(', '),
           timeoutText: timeout > 0 ? `${timeout / 1000}${t('seconds')}` : t('builtInDefaultTimeout'),
         })
       }
@@ -865,12 +881,16 @@ function BuiltInStrategyCard({ t, describe }: { t: (key: string) => string; desc
           <div className="dshar-provider-row dshar-muted">
             <span>{t('builtInProvider')}</span>
             <span>{t('builtInRetry')}</span>
+            <span>{t('builtInCodes')}</span>
+            <span>{t('builtInBackoff')}</span>
             <span>{t('builtInIdleTimeout')}</span>
           </div>
           {rows.map((row, index) => (
             <div className="dshar-provider-row" key={`${row.name}-${row.retryText}-${row.timeoutText}-${index}`}>
               <span>{row.name}</span>
               <span>{row.retryText}</span>
+              <span>{row.codesText || '—'}</span>
+              <span>{row.backoffText}</span>
               <span>{row.timeoutText}</span>
             </div>
           ))}
@@ -906,13 +926,17 @@ function DistributionList({
 function StatsDashboard({ t }: { t: (key: string) => string }) {
   const [range, setRange] = useState<StatsRange>(7)
   const [loaded, setLoaded] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [reloadNonce, setReloadNonce] = useState(0)
+  const [requestedRange, setRequestedRange] = useState<StatsRange | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [stats, setStats] = useState<StatsResponse | null>(null)
+  const requestGeneration = useRef(0)
 
-  /** 请求当前日期范围的统计数据，失败时仅显示错误文本。 */
+  /** 请求当前日期范围的统计数据，忽略过期请求结果。 */
   const loadStats = async (nextRange: StatsRange) => {
+    const generation = ++requestGeneration.current
     setLoading(true)
     setError('')
     try {
@@ -920,32 +944,44 @@ function StatsDashboard({ t }: { t: (key: string) => string }) {
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`.trim())
       const payload = await response.json() as unknown
       if (!payload || typeof payload !== 'object') throw new Error('invalid response')
-      setStats(payload as StatsResponse)
+      if (generation === requestGeneration.current) setStats(payload as StatsResponse)
     } catch (loadError) {
+      if (generation !== requestGeneration.current) return
       setStats(null)
       setError(formatMessage(t('dashboardError'), { error: loadError instanceof Error ? loadError.message : String(loadError) }))
     } finally {
-      setLoading(false)
+      if (generation === requestGeneration.current) setLoading(false)
     }
   }
 
-  // 首次点击加载后，日期筛选变化自动重新拉取；默认状态不会触发请求。
+  // 只对已加载且展开的看板响应筛选、首次加载与手动刷新。
   useEffect(() => {
-    if (loaded) void loadStats(range)
-  }, [range, loaded, reloadNonce])
+    if (loaded && expanded && requestedRange === range) void loadStats(range)
+  }, [range, loaded, reloadNonce, requestedRange, expanded])
+
+  // 关闭看板或卸载时，使进行中的请求结果失效。
+  useEffect(() => {
+    if (expanded) return () => { requestGeneration.current += 1 }
+    requestGeneration.current += 1
+  }, [expanded])
 
   const summary = stats?.summary
+  const events = Array.isArray(stats?.events) ? stats.events : []
   const totalRetries = displayInteger(summary?.totalRetries)
   const autoContinues = displayInteger(summary?.autoContinues)
   const watchdogTriggers = displayInteger(summary?.watchdogTriggers)
-  const empty = stats !== null && totalRetries + autoContinues + watchdogTriggers === 0
-  const events = Array.isArray(stats?.events) ? stats.events : []
+  const failedTurns = displayInteger(summary?.failedTurns)
+  const successfulTurns = displayInteger(summary?.successTurnsWithRetries ?? summary?.successTurns)
+  const empty = stats !== null
+    && totalRetries + autoContinues + watchdogTriggers + failedTurns === 0
+    && successfulTurns === 0
+    && events.length === 0
   const byCode = Array.isArray(stats?.byCode) ? stats.byCode : []
   const byProvider = Array.isArray(stats?.byProvider) ? stats.byProvider : []
   const byDay = Array.isArray(stats?.byDay) ? stats.byDay : []
 
   return (
-    <details className="dshar-card dshar-details">
+    <details className="dshar-card dshar-details" onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary className="dshar-summary">{t('dashboardTitle')}</summary>
       <div className="dshar-dashboard-toolbar">
         <div className="dshar-dashboard-filters">
@@ -959,11 +995,20 @@ function StatsDashboard({ t }: { t: (key: string) => string }) {
               { value: '30', label: t('dashboard30Days') },
               { value: '0', label: t('dashboardAll') },
             ]}
-            onChange={(value) => setRange(Number(value) as StatsRange)}
+            onChange={(value) => {
+              const nextRange = Number(value) as StatsRange
+              setRange(nextRange)
+              if (loaded) setRequestedRange(nextRange)
+            }}
           />
           <button className="dshar-button" type="button" disabled={loading} onClick={() => {
-            if (!loaded) setLoaded(true)
-            else setReloadNonce((current) => current + 1)
+            if (!loaded) {
+              setRequestedRange(range)
+              setLoaded(true)
+            } else {
+              setRequestedRange(range)
+              setReloadNonce((current) => current + 1)
+            }
           }}>
             {loaded ? t('dashboardRefresh') : t('dashboardLoad')}
           </button>
@@ -981,7 +1026,7 @@ function StatsDashboard({ t }: { t: (key: string) => string }) {
                 [t('dashboardSupplementalRetries'), displayInteger(summary?.supplementalRetries)],
                 [t('dashboardContinues'), autoContinues],
                 [t('dashboardWatchdog'), watchdogTriggers],
-                [t('dashboardSuccessTurns'), displayInteger(summary?.successTurnsWithRetries ?? summary?.successTurns)],
+                [t('dashboardSuccessTurns'), successfulTurns],
                 [t('dashboardFailedTurns'), displayInteger(summary?.failedTurns)],
                 [t('dashboardAverage'), displayNumber(summary?.avgRetriesPerSuccessTurn).toFixed(2)],
               ].map(([label, value]) => (
@@ -1156,11 +1201,13 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
   const initialConfig = normalizeConfig(snapshot.value)
   const [draft, setDraft] = useState<AutoRetryConfig>(() => cloneConfig(initialConfig))
   const [baseline, setBaseline] = useState<AutoRetryConfig>(() => cloneConfig(initialConfig))
+  const [baselineRevision, setBaselineRevision] = useState<number | undefined>(snapshot.revision)
+  const [hasPendingDraft, setHasPendingDraft] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const [saveError, setSaveError] = useState('')
   const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const dirty = !configsEqual(draft, baseline)
-  const disabled = !snapshot.writable
+  const dirty = hasPendingDraft && !configsEqual(draft, baseline)
+  const disabled = !snapshot.writable || snapshot.status !== 'ready' || baselineRevision === undefined
 
   // 订阅 ConfigForm，让外部配置变更能刷新板块快照。
   useEffect(() => {
@@ -1174,7 +1221,9 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
     const next = normalizeConfig(snapshot.value)
     setDraft(cloneConfig(next))
     setBaseline(cloneConfig(next))
-  }, [snapshot.value, dirty])
+    setBaselineRevision(snapshot.revision)
+    setHasPendingDraft(false)
+  }, [snapshot.value, snapshot.revision, dirty])
 
   // 保存成功提示只显示几秒，并在板块卸载时清理计时器。
   useEffect(() => {
@@ -1191,6 +1240,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
       ...current,
       rules: current.rules.map((rule) => (rule.code === code ? { ...rule, ...patch } : rule)),
     }))
+    setHasPendingDraft(true)
     setSaveState('idle')
   }
 
@@ -1200,9 +1250,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
     setSaveState('saving')
     setSaveError('')
     try {
-      // 已核实 ConfigForm.set(field, value) 会转成 { op: "set", path: [field], value }。
-      // mutate 会串行使用 pendingRevision ?? 当前 snapshot.revision，并在冲突后自动重读；
-      // 因此这里一次提交完整的五个顶层字段，既保持 revision 围栏，也避免逐字段中间状态。
+      // 固定到草稿开始编辑时读到的 revision，避免覆盖编辑期间来自其他客户端的变更。
       const ok = await form.mutate([
         { op: 'set', path: ['enabled'], value: draft.enabled },
         { op: 'set', path: ['notify'], value: draft.notify },
@@ -1210,15 +1258,18 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
         { op: 'set', path: ['mainAgent'], value: draft.mainAgent },
         { op: 'set', path: ['subAgent'], value: draft.subAgent },
         { op: 'set', path: ['backoff'], value: draft.backoff },
-      ])
+      ], baselineRevision)
       if (!ok) {
         setSaveError('写入被拒绝（revision 冲突或校验失败）')
         setSaveState('failed')
         return
       }
-      const next = normalizeConfig(form.getSnapshot().value ?? draft)
+      const nextSnapshot = form.getSnapshot()
+      const next = normalizeConfig(nextSnapshot.value ?? draft)
       setDraft(cloneConfig(next))
       setBaseline(cloneConfig(next))
+      setBaselineRevision(nextSnapshot.revision)
+      setHasPendingDraft(false)
       setSaveState('saved')
     } catch (error) {
       // 展示 wire 层错误详情，便于诊断 host 端拒绝原因
@@ -1230,8 +1281,11 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
   /** 放弃本地草稿并重新读取当前 ConfigForm 快照。 */
   const discardDraft = () => {
     const next = normalizeConfig(form.getSnapshot().value)
+    const nextSnapshot = form.getSnapshot()
     setDraft(cloneConfig(next))
     setBaseline(cloneConfig(next))
+    setBaselineRevision(nextSnapshot.revision)
+    setHasPendingDraft(false)
     setSaveState('idle')
   }
 
@@ -1260,6 +1314,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           checked={draft.enabled}
           onChange={(enabled) => {
             setDraft((current) => ({ ...current, enabled }))
+            setHasPendingDraft(true)
             setSaveState('idle')
           }}
           disabled={disabled}
@@ -1270,6 +1325,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           checked={draft.notify}
           onChange={(notify) => {
             setDraft((current) => ({ ...current, notify }))
+            setHasPendingDraft(true)
             setSaveState('idle')
           }}
           disabled={disabled}
@@ -1291,6 +1347,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           checked={draft.mainAgent.requestRetry}
           onChange={(requestRetry) => {
             setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, requestRetry } }))
+            setHasPendingDraft(true)
             setSaveState('idle')
           }}
           disabled={disabled}
@@ -1301,6 +1358,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           checked={draft.mainAgent.autoContinue}
           onChange={(autoContinue) => {
             setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, autoContinue } }))
+            setHasPendingDraft(true)
             setSaveState('idle')
           }}
           disabled={disabled}
@@ -1322,6 +1380,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                   onChange={(event) => {
                     const continueDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 0, 600, draft.mainAgent.continueDelayMs)
                     setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, continueDelayMs } }))
+                    setHasPendingDraft(true)
                     setSaveState('idle')
                   }}
                 />
@@ -1342,6 +1401,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                 onChange={(event) => {
                   const maxConsecutive = clampInteger(event.currentTarget.valueAsNumber, 1, 50, draft.mainAgent.maxConsecutive)
                   setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, maxConsecutive } }))
+                  setHasPendingDraft(true)
                   setSaveState('idle')
                 }}
               />
@@ -1357,6 +1417,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                 onChange={(event) => {
                   const continueMessage = event.currentTarget.value
                   setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, continueMessage } }))
+                  setHasPendingDraft(true)
                   setSaveState('idle')
                 }}
               />
@@ -1369,6 +1430,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           checked={draft.mainAgent.idleWatchdog}
           onChange={(idleWatchdog) => {
             setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, idleWatchdog } }))
+            setHasPendingDraft(true)
             setSaveState('idle')
           }}
           disabled={disabled}
@@ -1390,6 +1452,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                   onChange={(event) => {
                     const idleTimeoutMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 30, 600, draft.mainAgent.idleTimeoutMs)
                     setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, idleTimeoutMs } }))
+                    setHasPendingDraft(true)
                     setSaveState('idle')
                   }}
                 />
@@ -1404,6 +1467,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           checked={draft.mainAgent.continueOnMaxTokens}
           onChange={(continueOnMaxTokens) => {
             setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, continueOnMaxTokens } }))
+            setHasPendingDraft(true)
             setSaveState('idle')
           }}
           disabled={disabled}
@@ -1418,6 +1482,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           checked={draft.subAgent.requestRetry}
           onChange={(requestRetry) => {
             setDraft((current) => ({ ...current, subAgent: { ...current.subAgent, requestRetry } }))
+            setHasPendingDraft(true)
             setSaveState('idle')
           }}
           disabled={disabled}
@@ -1444,6 +1509,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
             disabled={disabled}
             onChange={(intervalMode) => {
               setDraft((current) => ({ ...current, backoff: { ...current.backoff, intervalMode } }))
+              setHasPendingDraft(true)
               setSaveState('idle')
             }}
           />
@@ -1465,6 +1531,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                   onChange={(event) => {
                     const initialDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 0.1, 60, draft.backoff.initialDelayMs)
                     setDraft((current) => ({ ...current, backoff: { ...current.backoff, initialDelayMs } }))
+                    setHasPendingDraft(true)
                     setSaveState('idle')
                   }}
                 />
@@ -1486,6 +1553,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                   onChange={(event) => {
                     const maxDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 1, 300, draft.backoff.maxDelayMs)
                     setDraft((current) => ({ ...current, backoff: { ...current.backoff, maxDelayMs } }))
+                    setHasPendingDraft(true)
                     setSaveState('idle')
                   }}
                 />
@@ -1509,6 +1577,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                 onChange={(event) => {
                   const fixedDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 0.1, 600, draft.backoff.fixedDelayMs)
                   setDraft((current) => ({ ...current, backoff: { ...current.backoff, fixedDelayMs } }))
+                  setHasPendingDraft(true)
                   setSaveState('idle')
                 }}
               />
@@ -1524,7 +1593,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
         <button className="dshar-button" type="button" disabled={disabled || !dirty || saveState === 'saving'} onClick={saveDraft}>
           {t('save')}
         </button>
-        <button className="dshar-button" type="button" disabled={disabled || !dirty || saveState === 'saving'} onClick={discardDraft}>
+        <button className="dshar-button" type="button" disabled={!snapshot.writable || !dirty || saveState === 'saving'} onClick={discardDraft}>
           {t('discard')}
         </button>
         {saveState === 'saved' ? <span className="dshar-status" role="status">{t('saved')}</span> : null}

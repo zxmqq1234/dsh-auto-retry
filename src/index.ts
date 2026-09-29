@@ -13,12 +13,15 @@
  * 事件契约与版本（0.1.7-alpha.1）的核对结论见工作目录 DESIGN.md。
  */
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFile as writeFileAsync, writeFileSync } from 'node:fs'
+import { existsSync, mkdir as mkdirAsync, readFileSync, rename as renameAsync, unlink as unlinkAsync, writeFile as writeFileAsync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import Schema from '@deepseek-ai/schemastery'
 
+const mkdir = promisify(mkdirAsync)
+const rename = promisify(renameAsync)
+const unlink = promisify(unlinkAsync)
 const writeFile = promisify(writeFileAsync)
 
 /* ============================================================
@@ -215,14 +218,19 @@ export function apply(ctx: any, config: unknown): void {
 
   /* ---------- 运行时状态 ---------- */
 
-  // 请求级补充重试计数桶：`${sessionId}:${turn}:${code}` → 已重试次数
-  const retryBuckets = new Map<string, number>()
+  // 请求级补充重试计数桶：sessionId → turn → ruleCode → 已重试次数
+  const retryBuckets = new Map<string, Map<number, Map<string, number>>>()
   // 自动继续熔断计数：sessionId → 连续终局失败次数（回合 completed 清零）
   const continueStreaks = new Map<string, number>()
   // 待发送的自动继续定时器：sessionId → timer（防同一会话重复排队）
   const pendingContinues = new Map<string, ReturnType<typeof setTimeout>>()
-  // 看门狗定时器：sessionId → timer
-  const watchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  // 当前运行中的主智能体：供 volatile 配置更新时对账看门狗。
+  const runningAgents = new Map<string, AgentLike>()
+  // 插件卸载信号：终止所有正在等待的补充重试。
+  const lifetime = new AbortController()
+  let disposed = false
+  // 看门狗定时器：sessionId → timer 与使用的阈值。
+  const watchdogTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; timeoutMs: number }>()
 
   /* ---------- 通用工具 ---------- */
 
@@ -242,17 +250,33 @@ export function apply(ctx: any, config: unknown): void {
   }
 
   /** 可取消延迟：signal abort 或 dispose 时立即返回 false */
-  function cancellableDelay(ms: number, signal: AbortSignal): Promise<boolean> {
+  function cancellableDelay(ms: number, ...signals: AbortSignal[]): Promise<boolean> {
     return new Promise((resolve) => {
-      if (signal.aborted) return resolve(false)
+      if (signals.some((signal) => signal.aborted)) return resolve(false)
       const timer = setTimeout(() => { cleanup(); resolve(true) }, ms)
       const onAbort = () => { cleanup(); resolve(false) }
       function cleanup() {
         clearTimeout(timer)
-        signal.removeEventListener('abort', onAbort)
+        for (const signal of signals) signal.removeEventListener('abort', onAbort)
       }
-      signal.addEventListener('abort', onAbort, { once: true })
+      for (const signal of signals) signal.addEventListener('abort', onAbort, { once: true })
     })
+  }
+
+  /** Cancel a pending continuation before the user starts a new turn. */
+  function cancelPendingContinue(sessionId: string): void {
+    const timer = pendingContinues.get(sessionId)
+    if (!timer) return
+    clearTimeout(timer)
+    pendingContinues.delete(sessionId)
+  }
+
+  /** Cancel a pending continuation when user input enters the durable inbox. */
+  function cancelPendingContinueOnUserMessage(sessionId: string, event: SessionEventLike): void {
+    if (event.type !== 'agent/inbox/spliced' || !Array.isArray(event.data?.inserted)) return
+    if (event.data.inserted.some((message: UserMessageLike) => message?.source?.kind === 'user')) {
+      cancelPendingContinue(sessionId)
+    }
   }
 
   /** 限幅工具 */
@@ -288,16 +312,35 @@ export function apply(ctx: any, config: unknown): void {
   /** 内存中的事件列表（启动时从磁盘加载） */
   const statEvents: StatEvent[] = []
   let statsDirty = false
+  let statsRevision = 0
+  let statsFlushPromise: Promise<void> = Promise.resolve()
   let statsFlushTimer: ReturnType<typeof setTimeout> | undefined
 
   /** 启动时加载历史统计（损坏/缺失则从空开始） */
   try {
     if (existsSync(statsPath)) {
       const parsed = JSON.parse(readFileSync(statsPath, 'utf8'))
-      if (Array.isArray(parsed?.events)) statEvents.push(...parsed.events.slice(-STATS_MAX_EVENTS))
+      if (Array.isArray(parsed?.events)) {
+        const validEvents = parsed.events.filter((event: unknown): event is StatEvent => {
+          if (!event || typeof event !== 'object') return false
+          const item = event as Partial<StatEvent>
+          return typeof item.ts === 'number'
+            && Number.isFinite(item.ts)
+            && typeof item.sessionId === 'string'
+            && ['retry', 'continue', 'watchdog', 'turn-end'].includes(String(item.kind))
+        })
+        statEvents.push(...validEvents.slice(-STATS_MAX_EVENTS))
+      }
     }
   } catch (error) {
     log.warn('统计文件加载失败（忽略，从空开始）：%s', error instanceof Error ? error.message : String(error))
+  }
+
+  /** 安排一次防抖落盘；卸载后不再新增后台写入任务。 */
+  function scheduleStatsFlush(): void {
+    if (disposed) return
+    if (statsFlushTimer) clearTimeout(statsFlushTimer)
+    statsFlushTimer = setTimeout(() => { void flushStats() }, 5000)
   }
 
   /** 记录一条统计事件；debounce 5s 落盘，滚动保留最近 5000 条 */
@@ -305,8 +348,8 @@ export function apply(ctx: any, config: unknown): void {
     statEvents.push(event)
     if (statEvents.length > STATS_MAX_EVENTS) statEvents.splice(0, statEvents.length - STATS_MAX_EVENTS)
     statsDirty = true
-    if (statsFlushTimer) clearTimeout(statsFlushTimer)
-    statsFlushTimer = setTimeout(() => { void flushStats() }, 5000)
+    statsRevision += 1
+    scheduleStatsFlush()
     // 实时通知：总开关与通知开关都开着时，向所有 SSE 订阅者广播该事件
     const conf = cfg()
     if (conf.enabled && conf.notify) broadcastSSE(event)
@@ -330,16 +373,29 @@ export function apply(ctx: any, config: unknown): void {
     }
   }
 
-  /** 把事件列表写入磁盘（原子替换写法：先写临时名再重命名不可行于跨盘，直接整体覆写） */
+  /** 串行原子写入统计快照；失败时保留 dirty 状态供后续重试或卸载落盘。 */
   async function flushStats(): Promise<void> {
     statsFlushTimer = undefined
-    if (!statsDirty) return
-    statsDirty = false
-    try {
-      await writeFile(statsPath, JSON.stringify({ version: 1, events: statEvents }), 'utf8')
-    } catch (error) {
-      log.warn('统计文件写入失败：%s', error instanceof Error ? error.message : String(error))
-    }
+    const pending = statsFlushPromise.then(async () => {
+      if (!statsDirty) return
+      const revision = statsRevision
+      const snapshot = JSON.stringify({ version: 1, events: statEvents })
+      const temporaryPath = `${statsPath}.${process.pid}.${revision}.tmp`
+      try {
+        await mkdir(dirname(statsPath), { recursive: true })
+        await writeFile(temporaryPath, snapshot, 'utf8')
+        await rename(temporaryPath, statsPath)
+        if (statsRevision === revision) statsDirty = false
+      } catch (error) {
+        statsDirty = true
+        log.warn('统计文件写入失败：%s', error instanceof Error ? error.message : String(error))
+      } finally {
+        try { await unlink(temporaryPath) } catch { /* 临时文件可能已重命名或未创建 */ }
+      }
+    })
+    statsFlushPromise = pending
+    await pending
+    if (statsDirty && !disposed && !statsFlushTimer) scheduleStatsFlush()
   }
 
   /** 按天数范围过滤事件（days=0 表示全部） */
@@ -362,37 +418,52 @@ export function apply(ctx: any, config: unknown): void {
    *   - 内置预算耗尽或错误码不在内置集合 → next() 放行到本监听器，按规则追加。
    * ============================================================ */
   ctx.on('agent/request-error', async (payload: RequestErrorPayload, next: () => Promise<{ kind: 'retry' } | undefined>) => {
+    let delegated = false
+    let abandoned = false
+    let delegatedPromise: Promise<{ kind: 'retry' } | undefined> | undefined
+    const delegate = () => {
+      delegated = true
+      return delegatedPromise ??= Promise.resolve().then(next)
+    }
+    let bucket: Map<string, number> | undefined
+    let bucketRule: string | undefined
+    let used = 0
+    let retryCommitted = false
     try {
       const conf = cfg()
       // 总开关关闭 → 完全委托下游
-      if (!conf.enabled) return next()
+      if (!conf.enabled) return delegate()
       // 请求 signal 已 abort（用户停止/外部取消）→ 绝不重试
-      if (payload.signal.aborted) return next()
+      if (payload.signal.aborted || lifetime.signal.aborted) return delegate()
 
       const failure = payload.failure ?? {}
       const code = failure.code ?? 'UNKNOWN'
       const rule = matchRule(conf.rules, code)
       // 无规则 / 未勾选 / 次数为 0 → 委托下游
-      if (!rule || !rule.enabled || rule.maxRetries <= 0) return next()
+      if (!rule || !rule.enabled || rule.maxRetries <= 0) return delegate()
 
       // 主/子智能体分别开关
       const sub = isSubagent(payload.agent)
       const scopeOn = sub ? conf.subAgent.requestRetry : conf.mainAgent.requestRetry
-      if (!scopeOn) return next()
+      if (!scopeOn) return delegate()
 
-      // 计数桶：同一 (会话, 回合, 错误码) 共享一个桶
+      // 计数桶：同一 (会话, 回合, 规则) 共享一个预算
       const sessionId = payload.agent.session.id
-      const bucketKey = `${sessionId}:${payload.turn}:${code}`
-      const used = retryBuckets.get(bucketKey) ?? 0
+      const turns = retryBuckets.get(sessionId) ?? new Map<number, Map<string, number>>()
+      retryBuckets.set(sessionId, turns)
+      bucket = turns.get(payload.turn) ?? new Map<string, number>()
+      turns.set(payload.turn, bucket)
+      bucketRule = rule.code
+      used = bucket.get(rule.code) ?? 0
       if (used >= rule.maxRetries) {
         log.info('补充重试预算已用尽（%s 第 %d 次），放行终局', code, used)
-        return next()
+        return delegate()
       }
-      retryBuckets.set(bucketKey, used + 1)
+      bucket.set(rule.code, used + 1)
 
       // 重试间隔：上游 Retry-After 优先；否则按配置的模式——指数退避或固定间隔（均加 ±10% 抖动）
       const backoff = conf.backoff
-      const base = failure.providerRetryAfterMs != null
+      const base = failure.providerRetryAfterMs != null && Number.isFinite(failure.providerRetryAfterMs)
         ? clamp(failure.providerRetryAfterMs, 100, backoff.maxDelayMs)
         : backoff.intervalMode === 'fixed'
           ? backoff.fixedDelayMs
@@ -416,7 +487,10 @@ export function apply(ctx: any, config: unknown): void {
       log.info('计划补充重试：%s（%d/%d），%d ms 后重发', code, used + 1, rule.maxRetries, delayMs)
 
       // 等待期间被取消 → 放弃接管，失败走终局（可能由自动继续层接手）
-      if (!await cancellableDelay(delayMs, payload.signal)) return undefined
+      if (!await cancellableDelay(delayMs, payload.signal, lifetime.signal)) {
+        abandoned = true
+        return undefined
+      }
 
       payload.agent.session.append('llm/retry-started', {
         retryId,
@@ -425,11 +499,15 @@ export function apply(ctx: any, config: unknown): void {
         retry: used + 1,
       })
       // 接管：让 agent loop 在当前回合内重发请求
+      retryCommitted = true
       return { kind: 'retry' }
     } catch (error) {
-      // 监听器自身异常不允许破坏请求失败路径
+      // 监听器自身异常不允许破坏请求失败路径；发生在排程之后时回滚预算。
+      if (delegated) throw error
+      if (!retryCommitted && bucket && bucketRule !== undefined) bucket.set(bucketRule, used)
+      if (abandoned) return undefined
       log.warn('补充重试监听器异常：%o', error)
-      return next()
+      return delegate()
     }
   })
 
@@ -447,6 +525,8 @@ export function apply(ctx: any, config: unknown): void {
    * 第 2 层：回合级自动继续 + 看门狗活动信号 + 统计记录（session/event）
    * ============================================================ */
   ctx.on('session/event', (session: { id: string; header?: { origin?: string } }, event: SessionEventLike) => {
+    // 用户在自动继续等待期间发来消息，当前自动任务应让位。
+    cancelPendingContinueOnUserMessage(session.id, event)
     // 看门狗：任何 durable 事件都算会话活动，重置对应计时器
     if (watchdogTimers.has(session.id)) armWatchdog(session.id)
 
@@ -483,6 +563,8 @@ export function apply(ctx: any, config: unknown): void {
     if (event?.type !== 'turn/end') return
     const reason = event.data?.reason ?? {}
     const sessionId = session.id
+    const turn = event.data?.turn
+    if (typeof turn === 'number') clearRetryBucketsOfTurn(sessionId, turn)
 
     // 统计：回合终局结果（供"平均几次重试成功"按 (session, turn) 聚合）
     const knownModel = sessionModels.get(sessionId)
@@ -494,18 +576,16 @@ export function apply(ctx: any, config: unknown): void {
       provider: knownModel?.provider,
       model: knownModel?.model,
       code: reason.kind === 'error' ? reason.error?.code : reason.kind === 'aborted' ? 'ABORTED' : undefined,
-      outcome: reason.kind ?? String(reason),
+      outcome: reason.kind ?? 'unknown',
     })
 
     if (reason.kind === 'completed') {
-      // 回合成功：清熔断计数，并清该回合的重试计数桶
+      // 回合成功：清熔断计数。
       continueStreaks.set(sessionId, 0)
-      clearRetryBucketsOfTurn(sessionId, event.data?.turn)
       return
     }
 
     if (reason.kind === 'error') {
-      clearRetryBucketsOfTurn(sessionId, event.data?.turn)
       scheduleContinue(sessionId, reason.error?.code, event.data?.turn)
       return
     }
@@ -517,7 +597,6 @@ export function apply(ctx: any, config: unknown): void {
     }
 
     if (reason.kind === 'aborted') {
-      clearRetryBucketsOfTurn(sessionId, event.data?.turn)
       // 只有看门狗自己的 hook 取消才自动继续；
       // user（用户手动停止）/ parent / disposed / legacy 一律不继续
       if (reason.reason?.kind === 'hook' && cfg().mainAgent.idleWatchdog) {
@@ -529,10 +608,14 @@ export function apply(ctx: any, config: unknown): void {
 
   /** 回合终局后清理该回合的重试计数桶，避免 Map 无界增长 */
   function clearRetryBucketsOfTurn(sessionId: string, turn: number): void {
-    const prefix = `${sessionId}:${turn}:`
-    for (const key of retryBuckets.keys()) {
-      if (key.startsWith(prefix)) retryBuckets.delete(key)
-    }
+    const turns = retryBuckets.get(sessionId)
+    turns?.delete(turn)
+    if (turns?.size === 0) retryBuckets.delete(sessionId)
+  }
+
+  /** Remove every retry bucket owned by one session. */
+  function clearRetryBucketsOfSession(sessionId: string): void {
+    retryBuckets.delete(sessionId)
   }
 
   /**
@@ -594,16 +677,37 @@ export function apply(ctx: any, config: unknown): void {
   /* ============================================================
    * 第 3 层：无响应看门狗（agent/status + agent/assistant-stream）
    * ============================================================ */
+  ctx.on('agent/inbox/inserted', (payload: { agent: AgentLike; message: UserMessageLike }) => {
+    if (payload.message?.source?.kind === 'user') cancelPendingContinue(payload.agent.id)
+  })
+
+  /** Track one active main agent and arm its watchdog when current config allows it. */
+  function trackRunningAgent(agent: AgentLike): void {
+    if (isSubagent(agent) || agent.status !== 'running') return
+    runningAgents.set(agent.id, agent)
+    const conf = cfg()
+    if (conf.enabled && conf.mainAgent.idleWatchdog) armWatchdog(agent.id)
+  }
+
+  // A plugin mounted after a turn started must still observe the live agent.
+  for (const agent of agents.list()) trackRunningAgent(agent)
+
+  ctx.on('agent/created', (payload: { agent: AgentLike }) => {
+    trackRunningAgent(payload.agent)
+  })
+
   ctx.on('agent/status', (payload: { agent: AgentLike; status: 'idle' | 'running' }) => {
     const agent = payload.agent
     if (payload.status === 'idle') {
+      runningAgents.delete(agent.id)
       disarmWatchdog(agent.id)
       return
     }
-    // running：仅主智能体 + 看门狗开启时布防
+    // running：记录主智能体，供后续配置热更新时同步启停看门狗。
+    if (isSubagent(agent)) return
+    runningAgents.set(agent.id, agent)
     const conf = cfg()
     if (!conf.enabled || !conf.mainAgent.idleWatchdog) return
-    if (isSubagent(agent)) return
     armWatchdog(agent.id)
   })
 
@@ -627,14 +731,14 @@ export function apply(ctx: any, config: unknown): void {
       recordStat({ ts: Date.now(), kind: 'watchdog', sessionId, code: 'IDLE_TIMEOUT', source: 'supplemental', outcome: `idle>${timeoutMs}ms` })
       agent.cancel({ kind: 'hook', reason: 'auto-retry: idle watchdog' }, { keepInbox: true })
     }, timeoutMs)
-    watchdogTimers.set(sessionId, timer)
+    watchdogTimers.set(sessionId, { timer, timeoutMs })
   }
 
   /** 撤防 */
   function disarmWatchdog(sessionId: string): void {
-    const timer = watchdogTimers.get(sessionId)
-    if (timer) {
-      clearTimeout(timer)
+    const watchdog = watchdogTimers.get(sessionId)
+    if (watchdog) {
+      clearTimeout(watchdog.timer)
       watchdogTimers.delete(sessionId)
     }
   }
@@ -642,14 +746,20 @@ export function apply(ctx: any, config: unknown): void {
   /* ---------- 配置热更新对账（volatile 变更不重启插件，这里同步状态） ---------- */
   ctx.on('loader/volatile-update', () => {
     const conf = cfg()
-    // 看门狗被关闭或总开关关闭 → 全部撤防
-    if (!conf.enabled || !conf.mainAgent.idleWatchdog) {
-      for (const sessionId of [...watchdogTimers.keys()]) disarmWatchdog(sessionId)
+    // 每次读取最新配置，对当前运行中的主智能体同步布防状态与判定阈值。
+    for (const [sessionId, agent] of runningAgents) {
+      if (agent.status !== 'running') {
+        runningAgents.delete(sessionId)
+        disarmWatchdog(sessionId)
+      } else if (conf.enabled && conf.mainAgent.idleWatchdog) {
+        if (watchdogTimers.get(sessionId)?.timeoutMs !== conf.mainAgent.idleTimeoutMs) armWatchdog(sessionId)
+      } else {
+        disarmWatchdog(sessionId)
+      }
     }
     // 自动继续被关闭或总开关关闭 → 撤销待发送任务
     if (!conf.enabled || !conf.mainAgent.autoContinue) {
-      for (const timer of pendingContinues.values()) clearTimeout(timer)
-      pendingContinues.clear()
+      for (const sessionId of [...pendingContinues.keys()]) cancelPendingContinue(sessionId)
     }
   })
 
@@ -657,6 +767,7 @@ export function apply(ctx: any, config: unknown): void {
   ctx.on('agent/disposed', (payload: { agent: AgentLike }) => {
     const sessionId = payload.agent?.id
     if (!sessionId) return
+    runningAgents.delete(sessionId)
     disarmWatchdog(sessionId)
     const timer = pendingContinues.get(sessionId)
     if (timer) {
@@ -665,9 +776,7 @@ export function apply(ctx: any, config: unknown): void {
     }
     continueStreaks.delete(sessionId)
     sessionModels.delete(sessionId)
-    for (const key of retryBuckets.keys()) {
-      if (key.startsWith(`${sessionId}:`)) retryBuckets.delete(key)
-    }
+    clearRetryBucketsOfSession(sessionId)
   })
 
   /* ============================================================
@@ -697,7 +806,7 @@ export function apply(ctx: any, config: unknown): void {
       turns.set(key, entry)
     }
     const completed = [...turns.values()].filter((t) => t.outcome === 'completed' && t.retries > 0)
-    const failed = [...turns.values()].filter((t) => t.outcome !== undefined && t.outcome !== 'completed' && t.outcome !== 'forked')
+    const failed = [...turns.values()].filter((t) => t.outcome === 'error')
 
     // 分布统计
     const tally = (items: Array<string | undefined>) => {
@@ -723,7 +832,7 @@ export function apply(ctx: any, config: unknown): void {
       byDay.set(day, entry)
     }
     for (const e of turnEnds) {
-      if (e.outcome && e.outcome !== 'completed' && e.outcome !== 'forked') {
+      if (e.outcome === 'error') {
         const day = dayOf(e.ts)
         const entry = byDay.get(day) ?? { retries: 0, continues: 0, failedTurns: 0 }
         entry.failedTurns += 1
@@ -803,9 +912,12 @@ export function apply(ctx: any, config: unknown): void {
 
   /* ---------- 卸载兜底：清掉所有定时器并落盘统计 ---------- */
   ctx.effect(() => {
-    return () => {
-      for (const timer of watchdogTimers.values()) clearTimeout(timer)
+    return async () => {
+      disposed = true
+      lifetime.abort(new Error('auto-retry plugin disposed'))
+      for (const watchdog of watchdogTimers.values()) clearTimeout(watchdog.timer)
       watchdogTimers.clear()
+      runningAgents.clear()
       for (const timer of pendingContinues.values()) clearTimeout(timer)
       pendingContinues.clear()
       retryBuckets.clear()
@@ -817,12 +929,8 @@ export function apply(ctx: any, config: unknown): void {
         try { res.end() } catch { /* 尽力关闭 */ }
       }
       sseClients.clear()
-      if (statsDirty) {
-        statsDirty = false
-        try {
-          writeFileSync(statsPath, JSON.stringify({ version: 1, events: statEvents }), 'utf8')
-        } catch { /* 卸载阶段尽力落盘，失败则放弃 */ }
-      }
+      if (statsDirty) await flushStats()
+      else await statsFlushPromise
     }
   }, 'auto-retry: dispose timers and state')
 
