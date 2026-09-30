@@ -239,25 +239,25 @@ const ZH: Record<string, unknown> = {
   autoContinue: '回合级自动继续',
   autoContinueDesc: '开：回合彻底失败（重试穷尽、无可用模型等）后延迟 N 秒自动发"继续"开新回合。关：失败后保持停止，等你手动处理。你手动停止的回合永不自动继续。',
   continueDelay: '继续前延迟',
-  continueDelayHint: '自动继续前等待的秒数。如填 5：回合失败后等 5 秒才自动发"继续"；这 5 秒内你若发消息，本次自动继续会跳过。',
+  continueDelayHint: '自动继续前等待的秒数。如填 5：回合失败后等 5 秒才自动发"继续"；这 5 秒内你若发消息，本次自动继续会跳过。（可填 0~600 秒）',
   maxConsecutive: '连续失败上限',
-  maxConsecutiveHint: '连续失败达到上限后停止自动继续（防止网络彻底断开时无限循环），回合成功后清零。如填 5：连败 5 次后暂停，成功一轮即重新计数。',
+  maxConsecutiveHint: '连续失败达到上限后停止自动继续（防止网络彻底断开时无限循环），回合成功后清零。如填 5：连败 5 次后暂停，成功一轮即重新计数。（可填 1~50 的整数）',
   continueMessage: '继续消息',
   continueMessageHint: '自动继续时以用户身份发给模型的消息文本。',
   idleWatchdog: '无响应看门狗',
   idleWatchdogDesc: '开：运行中超过判定时长无任何流输出/事件就主动取消并自动继续（治"流挂起卡死"）。关：请求挂起时只能手动停止。注意：长工具调用+模型长静默可能被误取消（会自动恢复，不丢上下文）。',
   idleTimeout: '无响应判定时长',
-  idleTimeoutHint: '多少秒无任何活动判定为无响应。如填 120：整整 2 分钟没有任何流输出/事件才取消；内置流空闲超时默认 300 秒，填小于它的值可更快恢复。',
+  idleTimeoutHint: '多少秒无任何活动判定为无响应。如填 120：整整 2 分钟没有任何流输出/事件才取消；内置流空闲超时默认 300 秒，填小于它的值可更快恢复。（可填 30~600 秒的整数）',
   watchdogHint: '回合运行期间若超过判定时长完全没有流输出/事件，主动取消当前请求并自动继续；注意与上游流空闲超时的关系。',
   subAgentHint: '子智能体是什么：主智能体通过 subagent 工具派生出来的临时 AI 助手，替主智能体执行子任务（如搜索、批处理），它有自己的会话和模型调用。',
   subAgentHint2: '失败时会发生什么：子智能体的请求失败会先走内置重试、再按上方规则追加；彻底失败后主智能体会收到一条错误结果并自行决定下一步（重派或换路），因此不提供"自动继续"。',
   subAgentHint3: '与主智能体的区别：子智能体通常一次性运行完即结束（one-shot），无法继续对话；重试次数与主智能体共用同一套"触发情况"配置。',
   subAgentDesc: '开：子智能体的请求失败也按上方勾选的情况追加重试。关：子智能体只靠内置重试。',
   backoffInitial: '初始退避',
-  backoffInitialHint: '指数退避的起点（秒）。如填 2：第 1 次重试等 2 秒、第 2 次等 4 秒、第 3 次等 8 秒……直到上限。',
+  backoffInitialHint: '指数退避的起点（秒）。如填 2：第 1 次重试等 2 秒、第 2 次等 4 秒、第 3 次等 8 秒……直到上限。（可填 0.1~60 秒）',
   backoffMax: '退避上限',
-  backoffMaxHint: '指数退避的封顶（秒）。如填 60：无论指数翻到多大，单次等待不超过 60 秒。',
-  fixedDelayHint: '每次重试固定等待的秒数。如填 30：每次重试前都等 30 秒；若上游返回 429 的 Retry-After，会优先用它。',
+  backoffMaxHint: '指数退避的封顶（秒）。如填 60：无论指数翻到多大，单次等待不超过 60 秒。（可填 1~300 秒）',
+  fixedDelayHint: '每次重试固定等待的秒数。如填 30：每次重试前都等 30 秒；若上游返回 429 的 Retry-After，会优先用它。（可填 0.1~600 秒）',
   backoffHint: '指数退避：间隔每次翻倍（初始×2ⁿ，封顶上限）；固定间隔：每次等固定秒数。两者都尊重 429 的 Retry-After 并加±10%抖动。',
   seconds: '秒',
   retries: '次',
@@ -266,31 +266,52 @@ const ZH: Record<string, unknown> = {
   saved: '已保存',
   saveFailed: '保存失败，请重试。',
   'rules.RATE_LIMIT.label': '限流（429）',
-  'rules.RATE_LIMIT.hint': '请求过于频繁/配额限流；内置默认已重试 5 次，此处为追加。',
+  'rules.RATE_LIMIT.hint': '请求过于频繁/配额限流；内置默认已重试 5 次，此处为追加。（可填 0~20 的整数）',
   'rules.SERVER.label': '服务端错误（5xx）',
-  'rules.SERVER.hint': '上游 5xx、过载；内置默认已重试，此处为追加。',
+  'rules.SERVER.hint': '上游 5xx、过载；内置默认已重试，此处为追加。（可填 0~20 的整数）',
   'rules.TIMEOUT.label': '响应超时',
-  'rules.TIMEOUT.hint': '连接建立但流空闲超时；内置默认已重试，此处为追加。',
+  'rules.TIMEOUT.hint': '连接建立但流空闲超时；内置默认已重试，此处为追加。（可填 0~20 的整数）',
   'rules.EMPTY_RESPONSE.label': '空响应',
-  'rules.EMPTY_RESPONSE.hint': '模型正常结束但零内容；内置默认已重试，此处为追加。',
+  'rules.EMPTY_RESPONSE.hint': '模型正常结束但零内容；内置默认已重试，此处为追加。（可填 0~20 的整数）',
   'rules.TRANSPORT.label': '网络传输错误',
-  'rules.TRANSPORT.hint': '连接中断、SSE 断开、DNS 等网络层故障；内置默认已重试，此处为追加。',
+  'rules.TRANSPORT.hint': '连接中断、SSE 断开、DNS 等网络层故障；内置默认已重试，此处为追加。（可填 0~20 的整数）',
   'rules.UNKNOWN.label': '未知错误',
-  'rules.UNKNOWN.hint': '无法归类的失败（网络差时常见）；内置默认不重试，此处为首次重试。',
+  'rules.UNKNOWN.hint': '无法归类的失败（网络差时常见）；内置默认不重试，此处为首次重试。（可填 0~20 的整数）',
   'rules.HTTP_4XX.label': '其他 HTTP 4xx',
-  'rules.HTTP_4XX.hint': '404/408 等未单列的客户端错误（匹配 HTTP_ 前缀）。',
+  'rules.HTTP_4XX.hint': '404/408 等未单列的客户端错误（匹配 HTTP_ 前缀）。（可填 0~20 的整数）',
   'rules.ABORTED.label': '请求中断',
-  'rules.ABORTED.hint': '含用户手动停止与看门狗取消；勾选后手动停止也会重试，慎选。',
+  'rules.ABORTED.hint': '含用户手动停止与看门狗取消；勾选后手动停止也会重试，慎选。（可填 0~20 的整数）',
   continueOnMaxTokens: '截断自动继续',
   continueOnMaxTokensHint: '输出因 max-tokens 被截断时自动发继续；连续截断同样计入熔断上限。',
   continueOnMaxTokensDesc: '开：输出因长度被截断时自动发继续接着写。关：截断即停（连续截断计入熔断上限，防止无限续写）。',
   footerVersion: '自动重试 v{version}',
   footerBy: 'by zxmqq1234',
   footerGithub: 'GitHub',
-  toastRetryTitle: '已自动重试',
-  toastContinueTitle: '回合失败，已自动继续',
-  toastWatchdogTitle: '无响应看门狗',
-  toastStreak: '连续第 {n} 次',
+  toastRetryTitle: '自动重试插件 · 已自动重试',
+  toastRetryBody: '{ai} · {code}（{attempt}/{maxRetries}）',
+  toastContinueTitle: '自动重试插件 · 回合失败，已自动继续',
+  toastContinueBody: '{ai} · {code}{streak}',
+  toastWatchdogTitle: '自动重试插件 · 无响应看门狗',
+  toastWatchdogBody: '{idle} 秒无活动，已取消请求并准备继续',
+  toastStreak: ' · 连续第 {n} 次',
+  numberInputInvalid: '输入无效，已回退为 {value}',
+  numberInputClamped: '已自动修正为 {value}',
+  bannerRetryTitle: '自动重试插件 · 正在重试',
+  bannerRetryBody: '{source} 第 {attempt}/{maxRetries} 次 · {code} · {ai}',
+  bannerRetrySourceBuiltIn: '内置重试（本插件代为显示）',
+  bannerRetrySourceSupplemental: '补充重试',
+  bannerRetryCountdown: '{seconds} 秒后自动重试',
+  bannerRetryActive: '正在重试…',
+  bannerContinueScheduledTitle: '自动重试插件 · 准备自动继续',
+  bannerContinueScheduledBody: '回合失败（{code}）',
+  bannerContinueScheduledCountdown: '{seconds} 秒后自动发送继续消息',
+  bannerContinueActive: '正在发送继续…',
+  bannerWatchdogTitle: '自动重试插件 · 无响应看门狗',
+  bannerWatchdogBody: '{seconds} 秒无活动，已取消请求并自动恢复',
+  bannerFuseTitle: '自动重试插件 · 已停止自动继续',
+  bannerFuseBody: '连续失败 {streak} 次达到上限 {maxConsecutive}，为防无限循环已暂停；回合成功后自动恢复',
+  bannerContinueTitle: '自动重试插件 · 已自动发送继续',
+  bannerContinueBody: '已自动发送继续（连续第 {n} 次）',
   intervalMode: '间隔模式',
   intervalExponential: '指数退避',
   intervalFixed: '固定间隔',
@@ -405,21 +426,21 @@ const EN: Record<string, unknown> = {
   saved: 'Saved',
   saveFailed: 'Save failed. Please try again.',
   'rules.RATE_LIMIT.label': 'Rate limit (429)',
-  'rules.RATE_LIMIT.hint': 'Requests too frequent or quota limited; built-in retry already tried 5 times, so this is additive.',
+  'rules.RATE_LIMIT.hint': 'Requests too frequent or quota limited; built-in retry already tried 5 times, so this is additive. (Allowed: integer 0–20)',
   'rules.SERVER.label': 'Server error (5xx)',
-  'rules.SERVER.hint': 'Upstream 5xx or overload; built-in retry already tried, so this is additive.',
+  'rules.SERVER.hint': 'Upstream 5xx or overload; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
   'rules.TIMEOUT.label': 'Response timeout',
-  'rules.TIMEOUT.hint': 'Connection established but the stream was idle; built-in retry already tried, so this is additive.',
+  'rules.TIMEOUT.hint': 'Connection established but the stream was idle; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
   'rules.EMPTY_RESPONSE.label': 'Empty response',
-  'rules.EMPTY_RESPONSE.hint': 'The model ended normally without content; built-in retry already tried, so this is additive.',
+  'rules.EMPTY_RESPONSE.hint': 'The model ended normally without content; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
   'rules.TRANSPORT.label': 'Transport error',
-  'rules.TRANSPORT.hint': 'Connection reset, SSE disconnect, DNS, or another network-layer failure; built-in retry already tried, so this is additive.',
+  'rules.TRANSPORT.hint': 'Connection reset, SSE disconnect, DNS, or another network-layer failure; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
   'rules.UNKNOWN.label': 'Unknown error',
-  'rules.UNKNOWN.hint': 'An uncategorized failure, common on unstable networks; built-in retry does not retry this by default, so this is the first retry.',
+  'rules.UNKNOWN.hint': 'An uncategorized failure, common on unstable networks; built-in retry does not retry this by default, so this is the first retry. (Allowed: integer 0–20)',
   'rules.HTTP_4XX.label': 'Other HTTP 4xx',
-  'rules.HTTP_4XX.hint': 'Client errors such as 404/408 not listed separately; matches the HTTP_ prefix.',
+  'rules.HTTP_4XX.hint': 'Client errors such as 404/408 not listed separately; matches the HTTP_ prefix. (Allowed: integer 0–20)',
   'rules.ABORTED.label': 'Request aborted',
-  'rules.ABORTED.hint': 'Includes manual stops and watchdog cancellation; selecting this also retries manual stops, so use with care.',
+  'rules.ABORTED.hint': 'Includes manual stops and watchdog cancellation; selecting this also retries manual stops, so use with care. (Allowed: integer 0–20)',
   continueOnMaxTokens: 'Continue after truncation',
   continueOnMaxTokensHint: 'Automatically continue when output is truncated by max-tokens; consecutive truncations count toward the fuse limit.',
   intervalMode: 'Interval mode',
@@ -507,26 +528,47 @@ const EN: Record<string, unknown> = {
   notifyDesc: 'On: every retry/continue/watchdog event pops up in the top-right corner. Off: silent execution, only recorded in the dashboard.',
   requestRetryDesc: 'On: selected failures get supplemental retries for the main agent after built-in retry is exhausted or not applicable. Off: main agent relies on built-in retry only.',
   autoContinueDesc: 'On: after a turn fails for good (retries exhausted, no adapter, ...), wait N seconds and auto-send "continue". Off: the session stays stopped until you act. Manually stopped turns never auto-continue.',
-  continueDelayHint: 'Seconds to wait before an automatic continuation. E.g. 5: the continuation fires 5s after a failed turn; sending a message during that window skips it.',
-  maxConsecutiveHint: 'Stop auto-continuing after this many consecutive failures (prevents infinite loops when the network is fully down); a successful turn resets the count. E.g. 5: pause after 5 straight failures.',
+  continueDelayHint: 'Seconds to wait before an automatic continuation. E.g. 5: the continuation fires 5s after a failed turn; sending a message during that window skips it. (Allowed: 0–600 seconds)',
+  maxConsecutiveHint: 'Stop auto-continuing after this many consecutive failures (prevents infinite loops when the network is fully down); a successful turn resets the count. E.g. 5: pause after 5 straight failures. (Allowed: integer 1–50)',
   continueMessageHint: 'Sent to the model as the user message when auto-continuing.',
   idleWatchdogDesc: 'On: if a running turn has no stream output or event for the threshold, cancel it and auto-continue (fixes hung requests). Off: a hung request can only be stopped manually. Note: long tool calls with a silent model may be cancelled (it recovers automatically without losing context).',
-  idleTimeoutHint: 'Seconds of zero activity before declaring no-response. E.g. 120: cancel only after 2 full minutes of silence; the built-in stream idle timeout defaults to 300s — lower values recover faster.',
+  idleTimeoutHint: 'Seconds of zero activity before declaring no-response. E.g. 120: cancel only after 2 full minutes of silence; the built-in stream idle timeout defaults to 300s — lower values recover faster. (Allowed: integer 30–600 seconds)',
   subAgentHint: 'What a sub-agent is: a temporary AI assistant derived by the main agent via the subagent tool for subtasks (search, batch work, ...). It has its own session and model calls.',
   subAgentHint2: 'On failure: the sub-agent request goes through built-in retry first, then the rules above. If it fails for good, the main agent receives an error result and decides what to do (re-dispatch or reroute), so no auto-continue is needed.',
   subAgentHint3: 'Differences from the main agent: sub-agents usually run once and finish (one-shot) and cannot be continued; retry counts share the same "trigger cases" configuration as the main agent.',
   subAgentDesc: 'On: sub-agent request failures also get supplemental retries per the selected cases. Off: sub-agents rely on built-in retry only.',
   continueOnMaxTokensDesc: 'On: when output is truncated by length, auto-send "continue" to keep writing. Off: stop at truncation (consecutive truncations count toward the fuse).',
-  backoffInitialHint: 'Starting point of exponential backoff (seconds). E.g. 2: retry 1 waits 2s, retry 2 waits 4s, retry 3 waits 8s... up to the cap.',
-  backoffMaxHint: 'Cap of exponential backoff (seconds). E.g. 60: no single wait exceeds 60 seconds no matter how the exponent grows.',
-  fixedDelayHint: 'Fixed seconds to wait before each retry. E.g. 30: every retry waits 30s first; a 429 Retry-After from upstream takes precedence.',
+  backoffInitialHint: 'Starting point of exponential backoff (seconds). E.g. 2: retry 1 waits 2s, retry 2 waits 4s, retry 3 waits 8s... up to the cap. (Allowed: 0.1–60 seconds)',
+  backoffMaxHint: 'Cap of exponential backoff (seconds). E.g. 60: no single wait exceeds 60 seconds no matter how the exponent grows. (Allowed: 1–300 seconds)',
+  fixedDelayHint: 'Fixed seconds to wait before each retry. E.g. 30: every retry waits 30s first; a 429 Retry-After from upstream takes precedence. (Allowed: 0.1–600 seconds)',
   footerVersion: 'Auto retry v{version}',
   footerBy: 'by zxmqq1234',
   footerGithub: 'GitHub',
-  toastRetryTitle: 'Retried automatically',
-  toastContinueTitle: 'Turn failed, continued automatically',
-  toastWatchdogTitle: 'No-response watchdog',
-  toastStreak: 'streak #{n}',
+  toastRetryTitle: 'Auto-retry plugin · Retried automatically',
+  toastRetryBody: '{ai} · {code} ({attempt}/{maxRetries})',
+  toastContinueTitle: 'Auto-retry plugin · Turn continued automatically',
+  toastContinueBody: '{ai} · {code}{streak}',
+  toastWatchdogTitle: 'Auto-retry plugin · No-response watchdog',
+  toastWatchdogBody: '{idle} seconds without activity; request cancelled and continuation prepared',
+  toastStreak: ' · streak #{n}',
+  numberInputInvalid: 'Invalid value; reverted to {value}',
+  numberInputClamped: 'Adjusted automatically to {value}',
+  bannerRetryTitle: 'Auto-retry plugin · Retrying',
+  bannerRetryBody: '{source} retry {attempt}/{maxRetries} · {code} · {ai}',
+  bannerRetrySourceBuiltIn: 'Built-in retry (displayed by this plugin)',
+  bannerRetrySourceSupplemental: 'Supplemental retry',
+  bannerRetryCountdown: 'Retrying automatically in {seconds} seconds',
+  bannerRetryActive: 'Retrying…',
+  bannerContinueScheduledTitle: 'Auto-retry plugin · Preparing auto-continue',
+  bannerContinueScheduledBody: 'Turn failed ({code})',
+  bannerContinueScheduledCountdown: 'Sending continuation automatically in {seconds} seconds',
+  bannerContinueActive: 'Sending continuation…',
+  bannerWatchdogTitle: 'Auto-retry plugin · No-response watchdog',
+  bannerWatchdogBody: '{seconds} seconds without activity; request cancelled and recovery started',
+  bannerFuseTitle: 'Auto-retry plugin · Auto-continue stopped',
+  bannerFuseBody: '{streak} consecutive failures reached limit {maxConsecutive}; paused to prevent an endless loop; resumes after a successful turn',
+  bannerContinueTitle: 'Auto-retry plugin · Continuation sent',
+  bannerContinueBody: 'Continuation sent automatically (streak #{n})',
 }
 
 /** 设置板块使用的局部 CSS，所有颜色通过语义变量或继承色表达。 */
@@ -562,6 +604,8 @@ const STYLES = `
 .dshar-field-label > span:first-child { font-size: 13px; font-weight: 500; }
 .dshar-field-label .dshar-hint { font-size: 11.5px; }
 .dshar-number { width: 92px; flex: 0 0 92px; }
+.dshar-number-wrap { display: flex; flex: 0 0 92px; flex-direction: column; align-items: stretch; gap: 3px; }
+.dshar-number-warning { color: var(--dsw-alias-warning-fg, rgba(230,162,60,.95)); font-size: 10.5px; line-height: 1.25; }
 .dshar-text { width: min(100%, 280px); flex: 0 1 280px; }
 .dshar-unit { display: flex; align-items: center; gap: 6px; }
 .dshar-note { padding-top: 8px; font-size: 12px; opacity: .7; line-height: 1.45; }
@@ -590,6 +634,16 @@ const STYLES = `
 .dshar-toast-body { display: block; margin-top: 2px; opacity: .85; }
 .dshar-toast-warn { border-left: 3px solid var(--dsw-alias-warning-fg, #e6a23c); }
 @keyframes dshar-toast-in { from { transform: translateX(14px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+/* 底部重试状态横幅：与 toast 共用语义色，覆盖 modal 层并从底部滑入。 */
+.dshar-retry-banner-stack { position: fixed; bottom: 24px; left: 50%; z-index: 1150; display: flex; width: min(560px, calc(100vw - 32px)); flex-direction: column; gap: 8px; transform: translateX(-50%); pointer-events: none; }
+.dshar-retry-banner { position: relative; overflow: hidden; pointer-events: auto; background: var(--dsw-alias-toast-bg, rgba(32,32,34,.96)); color: var(--dsw-alias-toast-fg, #f5f5f5); border-radius: 10px; padding: 11px 16px 11px 42px; box-shadow: 0 8px 28px rgba(0,0,0,.34); font-size: 12px; line-height: 1.45; animation: dshar-banner-in .2s ease-out; }
+.dshar-retry-banner-icon { position: absolute; top: 10px; left: 15px; font-size: 16px; font-weight: 700; line-height: 1; }
+.dshar-retry-banner::before { position: absolute; top: 0; bottom: 0; left: 0; width: 3px; background: var(--dsw-alias-info-fg, #5b9cf6); content: ''; }
+.dshar-retry-banner-warn::before { background: var(--dsw-alias-warning-fg, #e6a23c); }
+.dshar-retry-banner-title { display: block; font-size: 13px; font-weight: 650; }
+.dshar-retry-banner-body { display: block; margin-top: 3px; opacity: .88; }
+.dshar-retry-banner-countdown { display: block; margin-top: 3px; font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 600; }
+@keyframes dshar-banner-in { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .dshar-dashboard-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .dshar-dashboard-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dshar-dashboard-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -679,10 +733,110 @@ function millisecondsToSeconds(milliseconds: number): number {
   return milliseconds / 1000
 }
 
-/** 将秒转换为整数毫秒，避免浮点数写入 schema。 */
-function secondsToMilliseconds(seconds: number, min: number, max: number, fallbackMs: number): number {
-  const fallbackSeconds = millisecondsToSeconds(fallbackMs)
-  return Math.round(clampNumber(seconds, min, max, fallbackSeconds) * 1000)
+/** 将秒转换为整数毫秒，避免浮点数写入 schema；范围校验由 NumberInput 在失焦时完成。 */
+function secondsToMilliseconds(seconds: number): number {
+  return Math.round(seconds * 1000)
+}
+
+/**
+ * 可编辑数字控件：输入期间保留原始字符串，避免清空、小数点等中间态被立即改写。
+ * 只有失焦时才执行非法值回退、整数化和范围钳制。
+ */
+function NumberInput({
+  value,
+  min,
+  max,
+  step,
+  integer = false,
+  className,
+  ariaLabel,
+  title,
+  disabled,
+  t,
+  onChange,
+}: {
+  value: number
+  min: number
+  max: number
+  step?: number
+  integer?: boolean
+  className?: string
+  ariaLabel?: string
+  title?: string
+  disabled?: boolean
+  t: (key: string) => string
+  onChange: (value: number) => void
+}) {
+  const [raw, setRaw] = useState(() => String(value))
+  const [focused, setFocused] = useState(false)
+  const [warning, setWarning] = useState('')
+  const lastLegalValue = useRef(value)
+
+  // 外部重置草稿时，仅在未聚焦状态同步输入框，避免覆盖用户正在编辑的中间态。
+  useEffect(() => {
+    if (focused) return
+    setRaw(String(value))
+    lastLegalValue.current = value
+  }, [value, focused])
+
+  /** 输入阶段只提交可解析的有限数字；中间态留在 raw 中，不改写上层草稿。 */
+  const handleChange = (nextRaw: string) => {
+    setRaw(nextRaw)
+    setWarning('')
+    if (nextRaw === '' || /^[-+]?\d+\.$/.test(nextRaw) || /^[-+]?\.$/.test(nextRaw) || nextRaw === '-' || nextRaw === '+') return
+    const parsed = Number(nextRaw)
+    if (!Number.isFinite(parsed)) return
+    onChange(parsed)
+    if (parsed >= min && parsed <= max && (!integer || Number.isInteger(parsed))) lastLegalValue.current = parsed
+  }
+
+  /** 失焦时回退非法值，或将超出范围/非整数值修正为最近合法值。 */
+  const handleBlur = () => {
+    setFocused(false)
+    const parsed = Number(raw)
+    if (raw.trim() === '' || !Number.isFinite(parsed)) {
+      const fallback = lastLegalValue.current
+      setRaw(String(fallback))
+      onChange(fallback)
+      setWarning(formatMessage(t('numberInputInvalid'), { value: fallback }))
+      return
+    }
+    const normalized = integer ? Math.round(parsed) : parsed
+    const corrected = Math.min(max, Math.max(min, normalized))
+    setRaw(String(corrected))
+    if (corrected !== parsed) {
+      onChange(corrected)
+      lastLegalValue.current = corrected
+      setWarning(formatMessage(t('numberInputClamped'), { value: corrected }))
+      return
+    }
+    onChange(corrected)
+    lastLegalValue.current = corrected
+  }
+
+  return (
+    <div className="dshar-number-wrap">
+      <Input
+        className={className}
+        type="text"
+        inputMode={integer ? 'numeric' : 'decimal'}
+        value={raw}
+        min={min}
+        max={max}
+        step={step}
+        aria-label={ariaLabel}
+        title={title}
+        disabled={disabled}
+        onFocus={() => {
+          setFocused(true)
+          setWarning('')
+        }}
+        onChange={(event) => handleChange(event.currentTarget.value)}
+        onBlur={handleBlur}
+      />
+      {warning ? <span className="dshar-number-warning" role="alert">{warning}</span> : null}
+    </div>
+  )
 }
 
 /** 渲染一个带标题、说明和控件的设置字段。 */
@@ -831,17 +985,18 @@ function RuleRow({
         disabled={disabled}
       />
       <span className="dshar-hint dshar-rule-hint">{t(`rules.${rule.code}.hint`)}</span>
-      <Input
+      <NumberInput
         className="dshar-number"
-        type="number"
         min={0}
         max={20}
         step={1}
+        integer
         value={rule.maxRetries}
         title={tooltip}
-        aria-label={`${t(`rules.${rule.code}.label`)} ${t('retries')}`}
+        ariaLabel={`${t(`rules.${rule.code}.label`)} ${t('retries')}`}
         disabled={disabled || !rule.enabled}
-        onChange={(event) => onChange({ maxRetries: clampInteger(event.currentTarget.valueAsNumber, 0, 20, rule.maxRetries) })}
+        t={t}
+        onChange={(maxRetries) => onChange({ maxRetries })}
       />
     </div>
   )
@@ -1084,11 +1239,18 @@ function StatsDashboard({ t }: { t: (key: string) => string }) {
 /** SSE 事件帧的最小形状（与 host 端 StatEvent 对齐）。 */
 interface NotifyEvent {
   kind?: unknown
+  sessionId?: unknown
   model?: unknown
   provider?: unknown
   code?: unknown
   attempt?: unknown
   maxRetries?: unknown
+  delayMs?: unknown
+  turn?: unknown
+  streak?: unknown
+  maxConsecutive?: unknown
+  source?: unknown
+  ts?: unknown
   outcome?: unknown
 }
 
@@ -1128,20 +1290,19 @@ function notifyOutcomeText(outcome: unknown): string {
 function toToastItem(event: NotifyEvent, id: number, t: (key: string) => string): ToastItem | null {
   const model = typeof event.model === 'string' && event.model !== '' ? event.model : ''
   const aiText = model ? `${event.provider ?? ''}/${model}`.replace(/^\//, '') : typeof event.provider === 'string' ? event.provider : ''
-  const aiSuffix = aiText ? `${aiText} · ` : ''
   if (event.kind === 'retry') {
     const attempt = typeof event.attempt === 'number' ? event.attempt : '?'
     const maxRetries = typeof event.maxRetries === 'number' ? event.maxRetries : '?'
-    return { id, title: t('toastRetryTitle'), body: `${aiSuffix}${notifyCodeLabel(event.code)}（${attempt}/${maxRetries}）`, tone: 'info' }
+    return { id, title: t('toastRetryTitle'), body: formatMessage(t('toastRetryBody'), { ai: aiText || '—', code: notifyCodeLabel(event.code), attempt, maxRetries }), tone: 'info' }
   }
   if (event.kind === 'continue') {
     const streakText = notifyOutcomeText(event.outcome)
     const streak = streakText ? formatMessage(t('toastStreak'), { n: streakText }) : ''
-    return { id, title: t('toastContinueTitle'), body: `${aiSuffix}${notifyCodeLabel(event.code)}${streak ? ` · ${streak}` : ''}`, tone: 'info' }
+    return { id, title: t('toastContinueTitle'), body: formatMessage(t('toastContinueBody'), { ai: aiText || '—', code: notifyCodeLabel(event.code), streak: streak || '' }), tone: 'info' }
   }
   if (event.kind === 'watchdog') {
     const idleText = notifyOutcomeText(event.outcome)
-    return { id, title: t('toastWatchdogTitle'), body: `${aiSuffix}${idleText ? `${idleText}无活动，` : ''}已取消请求并准备继续`, tone: 'warn' }
+    return { id, title: t('toastWatchdogTitle'), body: formatMessage(t('toastWatchdogBody'), { idle: idleText ? idleText.replace(/ 秒$/, '') : '?' }), tone: 'warn' }
   }
   return null
 }
@@ -1149,49 +1310,178 @@ function toToastItem(event: NotifyEvent, id: number, t: (key: string) => string)
 /** 通知栈容量与单条停留时长。 */
 const TOAST_MAX = 3
 const TOAST_HOLD_MS = 4000
+const BANNER_MAX = 3
+const BANNER_HOLD_MS = 4000
+const BANNER_ACTIVE_MS = 3000
+
+/** 底部状态横幅的本地状态，deadline 只用于带倒计时的事件。 */
+interface RetryBannerItem {
+  id: number
+  key: string
+  sessionId: string
+  kind: 'retry' | 'continue-scheduled' | 'watchdog' | 'fuse-stopped' | 'continue'
+  title: string
+  body: string
+  tone: 'info' | 'warn'
+  deadline?: number
+  removeAt: number
+  remainingMs: number
+}
+
+/** 将秒数格式化为横幅使用的一位小数倒计时。 */
+function formatBannerSeconds(milliseconds: number): string {
+  return Math.max(0, milliseconds / 1000).toFixed(1)
+}
+
+/** 将 SSE 事件转换成底部横幅；无关事件返回 null。 */
+function toBannerItem(event: NotifyEvent, id: number, t: (key: string) => string, now: number): RetryBannerItem | null {
+  const sessionId = typeof event.sessionId === 'string' ? event.sessionId : ''
+  const kind = event.kind
+  const delayMs = typeof event.delayMs === 'number' && Number.isFinite(event.delayMs) ? Math.max(0, event.delayMs) : 0
+  const hasDeadline = kind === 'retry' || kind === 'continue-scheduled'
+  const deadline = hasDeadline ? now + delayMs : undefined
+  const removeAt = deadline ? deadline + BANNER_ACTIVE_MS : now + (kind === 'continue' ? BANNER_ACTIVE_MS : BANNER_HOLD_MS)
+  const key = `${sessionId || 'unknown'}:${String(kind)}`
+  if (kind === 'retry') {
+    const attempt = typeof event.attempt === 'number' ? event.attempt : '?'
+    const maxRetries = typeof event.maxRetries === 'number' ? event.maxRetries : '?'
+    const source = event.source === 'built-in' ? t('bannerRetrySourceBuiltIn') : t('bannerRetrySourceSupplemental')
+    const ai = [event.provider, event.model].filter((value) => typeof value === 'string' && value).join('/') || '—'
+    return {
+      id,
+      key,
+      sessionId,
+      kind,
+      title: t('bannerRetryTitle'),
+      body: formatMessage(t('bannerRetryBody'), { source, attempt, maxRetries, code: notifyCodeLabel(event.code), ai }),
+      tone: 'info',
+      deadline,
+      removeAt,
+      remainingMs: deadline ? delayMs : 0,
+    }
+  }
+  if (kind === 'continue-scheduled') {
+    return {
+      id,
+      key,
+      sessionId,
+      kind,
+      title: t('bannerContinueScheduledTitle'),
+      body: formatMessage(t('bannerContinueScheduledBody'), { code: notifyCodeLabel(event.code) }),
+      tone: 'info',
+      deadline,
+      removeAt,
+      remainingMs: deadline ? delayMs : 0,
+    }
+  }
+  if (kind === 'watchdog') {
+    const seconds = notifyOutcomeText(event.outcome) || '?'
+    return { id, key, sessionId, kind, title: t('bannerWatchdogTitle'), body: formatMessage(t('bannerWatchdogBody'), { seconds: seconds.replace(/ 秒$/, '') }), tone: 'warn', removeAt, remainingMs: 0 }
+  }
+  if (kind === 'fuse-stopped') {
+    const streak = typeof event.streak === 'number' ? event.streak : '?'
+    const maxConsecutive = typeof event.maxConsecutive === 'number' ? event.maxConsecutive : '?'
+    return { id, key, sessionId, kind, title: t('bannerFuseTitle'), body: formatMessage(t('bannerFuseBody'), { streak, maxConsecutive }), tone: 'warn', removeAt, remainingMs: 0 }
+  }
+  if (kind === 'continue') {
+    const streakText = notifyOutcomeText(event.outcome) || '?'
+    return { id, key, sessionId, kind, title: t('bannerContinueTitle'), body: formatMessage(t('bannerContinueBody'), { n: streakText }), tone: 'info', removeAt, remainingMs: 0 }
+  }
+  return null
+}
 
 /**
- * 右上角通知栈组件（挂在 shell.overlay 槽位）。
- * 订阅 /auto-retry/api/events 的 SSE 流，按帧入队 toast；每条 4 秒后自动消失。
+ * 同时管理右上角 toast 与底部重试横幅；两者共享一条 EventSource 连接。
+ * 横幅倒计时使用 client timer 的一次性 timeout 循环，避免沙箱中的裸定时器。
  */
 function NotifyStack({ t, timer }: { t: (key: string) => string; timer: ClientContext['timer'] }) {
   const [toasts, setToasts] = useState<ToastItem[]>([])
+  const [banners, setBanners] = useState<RetryBannerItem[]>([])
   const counter = useRef(0)
+  const tickCancel = useRef<(() => void) | undefined>(undefined)
+
+  useEffect(() => {
+    let disposed = false
+    const tick = () => {
+      if (disposed) return
+      const now = Date.now()
+      setBanners((current) => current.flatMap((banner) => {
+        if (banner.deadline && now >= banner.deadline) {
+          if (banner.removeAt <= now) return []
+          return [{ ...banner, deadline: undefined, remainingMs: 0, body: banner.kind === 'retry' ? t('bannerRetryActive') : t('bannerContinueActive') }]
+        }
+        if (banner.removeAt <= now) return []
+        return banner.deadline ? [{ ...banner, remainingMs: Math.max(0, banner.deadline - now) }] : [banner]
+      }))
+      tickCancel.current = timer.timeout(tick, 200)
+    }
+    tickCancel.current = timer.timeout(tick, 200)
+    return () => {
+      disposed = true
+      tickCancel.current?.()
+      tickCancel.current = undefined
+    }
+  }, [t, timer])
 
   useEffect(() => {
     const source = new EventSource('/auto-retry/api/events')
     source.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data) as NotifyEvent
-        const item = toToastItem(event, ++counter.current, t)
-        if (!item) return
-        setToasts((current) => {
-          const next = [...current, item]
-          // 超出容量丢最旧的
-          return next.length > TOAST_MAX ? next.slice(next.length - TOAST_MAX) : next
+        const id = ++counter.current
+        const toast = toToastItem(event, id, t)
+        if (toast) {
+          setToasts((current) => {
+            const next = [...current, toast]
+            return next.length > TOAST_MAX ? next.slice(next.length - TOAST_MAX) : next
+          })
+          timer.timeout(() => setToasts((current) => current.filter((item) => item.id !== toast.id)), TOAST_HOLD_MS)
+        }
+        if (event.kind === 'continue-cancelled' && typeof event.sessionId === 'string') {
+          setBanners((current) => current.filter((banner) => !(banner.sessionId === event.sessionId && banner.kind === 'continue-scheduled')))
+          return
+        }
+        const banner = toBannerItem(event, id, t, Date.now())
+        if (!banner) return
+        setBanners((current) => {
+          const next = [...current.filter((item) => item.key !== banner.key), banner]
+          return next.length > BANNER_MAX ? next.slice(next.length - BANNER_MAX) : next
         })
-        timer.timeout(() => {
-          setToasts((current) => current.filter((toast) => toast.id !== item.id))
-        }, TOAST_HOLD_MS)
       } catch {
         // 无法解析的帧直接忽略
       }
     }
-    // EventSource 断线会原生自动重连，这里无需处理 error
+    // EventSource 断线会原生自动重连，这里无需处理 error。
     return () => source.close()
   }, [t, timer])
 
-  if (toasts.length === 0) return null
-  return createPortal(
-    <div className="dshar-toast-stack">
-      {toasts.map((toast) => (
-        <div key={toast.id} className={toast.tone === 'warn' ? 'dshar-toast dshar-toast-warn' : 'dshar-toast'}>
-          <span className="dshar-toast-title">{toast.title}</span>
-          <span className="dshar-toast-body">{toast.body}</span>
-        </div>
-      ))}
-    </div>,
-    document.body,
+  return (
+    <>
+      {toasts.length > 0 ? createPortal(
+        <div className="dshar-toast-stack">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={toast.tone === 'warn' ? 'dshar-toast dshar-toast-warn' : 'dshar-toast'}>
+              <span className="dshar-toast-title">{toast.title}</span>
+              <span className="dshar-toast-body">{toast.body}</span>
+            </div>
+          ))}
+        </div>,
+        document.body,
+      ) : null}
+      {banners.length > 0 ? createPortal(
+        <div className="dshar-retry-banner-stack">
+          {banners.map((banner) => (
+            <div key={banner.id} className={banner.tone === 'warn' ? 'dshar-retry-banner dshar-retry-banner-warn' : 'dshar-retry-banner'}>
+              <span className="dshar-retry-banner-icon" aria-hidden="true">{banner.kind === 'watchdog' || banner.kind === 'fuse-stopped' ? '!' : '↻'}</span>
+              <span className="dshar-retry-banner-title">{banner.title}</span>
+              <span className="dshar-retry-banner-body">{banner.body}</span>
+              {banner.deadline && banner.remainingMs > 0 ? <span className="dshar-retry-banner-countdown">{formatMessage(t(banner.kind === 'retry' ? 'bannerRetryCountdown' : 'bannerContinueScheduledCountdown'), { seconds: formatBannerSeconds(banner.remainingMs) })}</span> : null}
+            </div>
+          ))}
+        </div>,
+        document.body,
+      ) : null}
+    </>
   )
 }
 
@@ -1367,18 +1657,18 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           <div className="dshar-subfield">
             <Field label={t('continueDelay')} hint={t('continueDelayHint')}>
               <div className="dshar-unit">
-                <Input
+                <NumberInput
                   className="dshar-number"
-                  type="number"
                   min={0}
                   max={600}
                   step={0.1}
                   value={millisecondsToSeconds(draft.mainAgent.continueDelayMs)}
-                  aria-label={t('continueDelay')}
+                  ariaLabel={t('continueDelay')}
                   title={t('tooltipContinueDelay')}
                   disabled={disabled}
-                  onChange={(event) => {
-                    const continueDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 0, 600, draft.mainAgent.continueDelayMs)
+                  t={t}
+                  onChange={(seconds) => {
+                    const continueDelayMs = secondsToMilliseconds(seconds)
                     setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, continueDelayMs } }))
                     setHasPendingDraft(true)
                     setSaveState('idle')
@@ -1388,18 +1678,18 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
               </div>
             </Field>
             <Field label={t('maxConsecutive')} hint={t('maxConsecutiveHint')}>
-              <Input
+              <NumberInput
                 className="dshar-number"
-                type="number"
                 min={1}
                 max={50}
                 step={1}
+                integer
                 value={draft.mainAgent.maxConsecutive}
-                aria-label={t('maxConsecutive')}
+                ariaLabel={t('maxConsecutive')}
                 title={t('tooltipMaxConsecutive')}
                 disabled={disabled}
-                onChange={(event) => {
-                  const maxConsecutive = clampInteger(event.currentTarget.valueAsNumber, 1, 50, draft.mainAgent.maxConsecutive)
+                t={t}
+                onChange={(maxConsecutive) => {
                   setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, maxConsecutive } }))
                   setHasPendingDraft(true)
                   setSaveState('idle')
@@ -1439,18 +1729,19 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           <div className="dshar-subfield">
             <Field label={t('idleTimeout')} hint={t('idleTimeoutHint')}>
               <div className="dshar-unit">
-                <Input
+                <NumberInput
                   className="dshar-number"
-                  type="number"
                   min={30}
                   max={600}
                   step={1}
+                  integer
                   value={millisecondsToSeconds(draft.mainAgent.idleTimeoutMs)}
-                  aria-label={t('idleTimeout')}
+                  ariaLabel={t('idleTimeout')}
                   title={t('tooltipIdleTimeout')}
                   disabled={disabled}
-                  onChange={(event) => {
-                    const idleTimeoutMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 30, 600, draft.mainAgent.idleTimeoutMs)
+                  t={t}
+                  onChange={(seconds) => {
+                    const idleTimeoutMs = secondsToMilliseconds(seconds)
                     setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, idleTimeoutMs } }))
                     setHasPendingDraft(true)
                     setSaveState('idle')
@@ -1518,18 +1809,18 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
           <>
             <Field label={t('backoffInitial')} hint={t('backoffInitialHint')}>
               <div className="dshar-unit">
-                <Input
+                <NumberInput
                   className="dshar-number"
-                  type="number"
                   min={0.1}
                   max={60}
                   step={0.1}
                   value={millisecondsToSeconds(draft.backoff.initialDelayMs)}
-                  aria-label={t('backoffInitial')}
+                  ariaLabel={t('backoffInitial')}
                   title={t('backoffHint')}
                   disabled={disabled}
-                  onChange={(event) => {
-                    const initialDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 0.1, 60, draft.backoff.initialDelayMs)
+                  t={t}
+                  onChange={(seconds) => {
+                    const initialDelayMs = secondsToMilliseconds(seconds)
                     setDraft((current) => ({ ...current, backoff: { ...current.backoff, initialDelayMs } }))
                     setHasPendingDraft(true)
                     setSaveState('idle')
@@ -1540,18 +1831,18 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
             </Field>
             <Field label={t('backoffMax')} hint={t('backoffMaxHint')}>
               <div className="dshar-unit">
-                <Input
+                <NumberInput
                   className="dshar-number"
-                  type="number"
                   min={1}
                   max={300}
                   step={0.1}
                   value={millisecondsToSeconds(draft.backoff.maxDelayMs)}
-                  aria-label={t('backoffMax')}
+                  ariaLabel={t('backoffMax')}
                   title={t('backoffHint')}
                   disabled={disabled}
-                  onChange={(event) => {
-                    const maxDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 1, 300, draft.backoff.maxDelayMs)
+                  t={t}
+                  onChange={(seconds) => {
+                    const maxDelayMs = secondsToMilliseconds(seconds)
                     setDraft((current) => ({ ...current, backoff: { ...current.backoff, maxDelayMs } }))
                     setHasPendingDraft(true)
                     setSaveState('idle')
@@ -1564,18 +1855,18 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
         ) : (
           <Field label={t('fixedDelay')} hint={t('fixedDelayHint')}>
             <div className="dshar-unit">
-              <Input
+              <NumberInput
                 className="dshar-number"
-                type="number"
                 min={0.1}
                 max={600}
                 step={0.1}
                 value={millisecondsToSeconds(draft.backoff.fixedDelayMs)}
-                aria-label={t('fixedDelay')}
+                ariaLabel={t('fixedDelay')}
                 title={t('backoffHint')}
                 disabled={disabled}
-                onChange={(event) => {
-                  const fixedDelayMs = secondsToMilliseconds(event.currentTarget.valueAsNumber, 0.1, 600, draft.backoff.fixedDelayMs)
+                t={t}
+                onChange={(seconds) => {
+                  const fixedDelayMs = secondsToMilliseconds(seconds)
                   setDraft((current) => ({ ...current, backoff: { ...current.backoff, fixedDelayMs } }))
                   setHasPendingDraft(true)
                   setSaveState('idle')

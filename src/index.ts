@@ -269,6 +269,8 @@ export function apply(ctx: any, config: unknown): void {
     if (!timer) return
     clearTimeout(timer)
     pendingContinues.delete(sessionId)
+    // 用户介入或热更新取消时，只广播实时状态，不污染统计文件。
+    if (!disposed) notifyOnly({ ts: Date.now(), kind: 'continue-cancelled', sessionId })
   }
 
   /** Cancel a pending continuation when user input enters the durable inbox. */
@@ -289,10 +291,14 @@ export function apply(ctx: any, config: unknown): void {
    * 持久化到 <DSH_HOME>/auto-retry-stats.json，供看板查询。
    * ============================================================ */
 
-  /** 统计事件（记录原始事件，聚合在查询时做） */
+  /**
+   * 统计事件（记录原始事件，聚合在查询时做）。SSE 帧也可能包含
+   * continue-scheduled/continue-cancelled/fuse-stopped 等仅广播类型，
+   * 这些类型不会进入 statEvents。
+   */
   interface StatEvent {
     ts: number
-    kind: 'retry' | 'continue' | 'watchdog' | 'turn-end'
+    kind: 'retry' | 'continue' | 'watchdog' | 'turn-end' | 'continue-scheduled' | 'continue-cancelled' | 'fuse-stopped'
     sessionId: string
     turn?: number
     provider?: string
@@ -301,6 +307,8 @@ export function apply(ctx: any, config: unknown): void {
     attempt?: number
     maxRetries?: number
     delayMs?: number
+    streak?: number
+    maxConsecutive?: number
     source?: 'built-in' | 'supplemental'
     outcome?: string
   }
@@ -351,6 +359,12 @@ export function apply(ctx: any, config: unknown): void {
     statsRevision += 1
     scheduleStatsFlush()
     // 实时通知：总开关与通知开关都开着时，向所有 SSE 订阅者广播该事件
+    const conf = cfg()
+    if (conf.enabled && conf.notify) broadcastSSE(event)
+  }
+
+  /** 仅广播实时状态事件；不写入统计数组，避免影响看板聚合。 */
+  function notifyOnly(event: StatEvent): void {
     const conf = cfg()
     if (conf.enabled && conf.notify) broadcastSSE(event)
   }
@@ -634,6 +648,8 @@ export function apply(ctx: any, config: unknown): void {
     const maxConsecutive = conf.mainAgent.maxConsecutive
     if (streak >= maxConsecutive) {
       log.warn('会话 %s 已连续失败 %d 次（上限 %d），停止自动继续', sessionId.slice(0, 8), streak, maxConsecutive)
+      // 熔断状态只推送给实时 UI，不记录为一次统计事件。
+      notifyOnly({ ts: Date.now(), kind: 'fuse-stopped', sessionId, code: errorCode, streak, maxConsecutive })
       return
     }
 
@@ -672,6 +688,8 @@ export function apply(ctx: any, config: unknown): void {
       }
     }, delayMs)
     pendingContinues.set(sessionId, timer)
+    // 排队成功后只广播实时倒计时状态，不写入统计文件。
+    notifyOnly({ ts: Date.now(), kind: 'continue-scheduled', sessionId, turn, code: errorCode, delayMs })
   }
 
   /* ============================================================
@@ -769,11 +787,7 @@ export function apply(ctx: any, config: unknown): void {
     if (!sessionId) return
     runningAgents.delete(sessionId)
     disarmWatchdog(sessionId)
-    const timer = pendingContinues.get(sessionId)
-    if (timer) {
-      clearTimeout(timer)
-      pendingContinues.delete(sessionId)
-    }
+    cancelPendingContinue(sessionId)
     continueStreaks.delete(sessionId)
     sessionModels.delete(sessionId)
     clearRetryBucketsOfSession(sessionId)
@@ -918,7 +932,7 @@ export function apply(ctx: any, config: unknown): void {
       for (const watchdog of watchdogTimers.values()) clearTimeout(watchdog.timer)
       watchdogTimers.clear()
       runningAgents.clear()
-      for (const timer of pendingContinues.values()) clearTimeout(timer)
+      for (const sessionId of [...pendingContinues.keys()]) cancelPendingContinue(sessionId)
       pendingContinues.clear()
       retryBuckets.clear()
       continueStreaks.clear()

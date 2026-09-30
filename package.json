@@ -1,6 +1,6 @@
 {
   "name": "dsh-auto-retry",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "dsh 自动重试插件：请求级补充重试 / 回合级自动继续 / 无响应看门狗 / 实时通知 / 统计看板",
   "type": "module",
   "main": "lib/index.js",
@@ -43,7 +43,7 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": "^0.1.7-alpha.1 || ^0.2.0-rc.1"
+    "@deepseek-ai/dsh": "^0.1.7-alpha.1 || ^0.2.0-rc.1 || ^0.2.0-rc.2"
   },
   "engines": {
     "node": ">=22"
