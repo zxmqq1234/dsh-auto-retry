@@ -258,6 +258,77 @@ test('supplemental retries keep one retryId and consecutive attempts per policy 
   })
 })
 
+test('global infinite retry keeps chain invariants while exceeding maxRetries', { concurrency: false }, async () => {
+  await withFakeTimers(async () => {
+    const fixture = createFixture({
+      infiniteRetry: true,
+      rules: [{ code: 'SERVER', enabled: true, maxRetries: 1 }],
+    })
+    try {
+      const agent = createAgent('session-infinite-global', {}, fixture.eventStore)
+      const signal = new AbortController().signal
+      for (let i = 1; i <= 5; i += 1) {
+        const pending = sendSupplementalFailure(fixture, agent, { turn: 3, step: 9, code: 'SERVER', message: '502' }, signal)
+        await Promise.resolve()
+        mock.timers.tick(200)
+        assert.deepEqual(await pending, { kind: 'retry' }, `attempt ${i} must retry despite maxRetries=1`)
+      }
+      const retries = agent.events.filter((event) => event.type === 'llm/retry')
+      assert.deepEqual(retries.map((event) => event.data.retry), [1, 2, 3, 4, 5])
+      assert.ok(retries.every((event) => event.data.maxRetries >= 1000), 'infinite retries must write the finite sentinel as maxRetries')
+      assertRetryChainInvariants(agent)
+    } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
+test('per-rule infinite retry ignores only its own maxRetries', { concurrency: false }, async () => {
+  await withFakeTimers(async () => {
+    const fixture = createFixture({
+      rules: [{ code: 'SERVER', enabled: true, maxRetries: 1, infinite: true }],
+    })
+    try {
+      const agent = createAgent('session-infinite-rule', {}, fixture.eventStore)
+      const signal = new AbortController().signal
+      for (let i = 1; i <= 3; i += 1) {
+        const pending = sendSupplementalFailure(fixture, agent, { turn: 1, step: 1, code: 'SERVER', message: '502' }, signal)
+        await Promise.resolve()
+        mock.timers.tick(200)
+        assert.deepEqual(await pending, { kind: 'retry' }, `infinite rule must retry beyond maxRetries=1 (attempt ${i})`)
+      }
+      const retries = agent.events.filter((event) => event.type === 'llm/retry')
+      assert.equal(retries.length, 3)
+      assert.ok(retries.every((event) => event.data.maxRetries >= 1000))
+      assertRetryChainInvariants(agent)
+    } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
+test('infinite continue disables the consecutive-failure fuse', { concurrency: false }, async () => {
+  await withFakeTimers(async () => {
+    const fixture = createFixture({
+      mainAgent: { maxConsecutive: 1, infiniteContinue: true, continueDelayMs: 100 },
+    })
+    try {
+      const agent = createAgent('infinite-continue')
+      fixture.liveAgents.set(agent.id, agent)
+      const onSessionEvent = fixture.listeners.get('session/event')[0]
+      // 熔断上限为 1，但无限连续失败开启：连续三次终局失败都应排定并发送继续
+      for (let i = 1; i <= 3; i += 1) {
+        onSessionEvent(agent.session, { type: 'turn/end', data: { turn: i, reason: { kind: 'error', error: { code: 'UNKNOWN' } } } })
+        mock.timers.tick(200)
+        agent.status = 'idle'
+      }
+      assert.equal(agent.followups.length, 3)
+    } finally {
+      await fixture.dispose()
+    }
+  })
+})
+
 test('retry attempts restart at 1 for each new step despite a shared budget', { concurrency: false }, async () => {
   await withFakeTimers(async () => {
     const fixture = createFixture({

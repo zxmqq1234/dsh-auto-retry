@@ -10,18 +10,24 @@ interface RetryRule {
   code: string
   enabled: boolean
   maxRetries: number
+  /** 单条规则无限重试：忽略 maxRetries。 */
+  infinite: boolean
 }
 
 /** 与 DESIGN.md §3 对齐的 client 配置形状。 */
 interface AutoRetryConfig {
   enabled: boolean
   notify: boolean
+  /** 全局无限重试：忽略所有勾选规则的次数（含 0）。 */
+  infiniteRetry: boolean
   rules: RetryRule[]
   mainAgent: {
     requestRetry: boolean
     autoContinue: boolean
     continueDelayMs: number
     maxConsecutive: number
+    /** 无限连续失败：取消自动继续的连续失败熔断。 */
+    infiniteContinue: boolean
     continueMessage: string
     idleWatchdog: boolean
     idleTimeoutMs: number
@@ -181,26 +187,28 @@ interface ClientContext {
 const NS = 'auto-retry'
 
 const RULE_DEFINITIONS = [
-  { code: 'RATE_LIMIT', enabled: true, maxRetries: 2 },
-  { code: 'SERVER', enabled: true, maxRetries: 2 },
-  { code: 'TIMEOUT', enabled: true, maxRetries: 2 },
-  { code: 'EMPTY_RESPONSE', enabled: true, maxRetries: 1 },
-  { code: 'TRANSPORT', enabled: true, maxRetries: 3 },
-  { code: 'UNKNOWN', enabled: true, maxRetries: 2 },
-  { code: 'HTTP_4XX', enabled: false, maxRetries: 1 },
-  { code: 'ABORTED', enabled: false, maxRetries: 1 },
+  { code: 'RATE_LIMIT', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'SERVER', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'TIMEOUT', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'EMPTY_RESPONSE', enabled: true, maxRetries: 1, infinite: false },
+  { code: 'TRANSPORT', enabled: true, maxRetries: 3, infinite: false },
+  { code: 'UNKNOWN', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'HTTP_4XX', enabled: false, maxRetries: 1, infinite: false },
+  { code: 'ABORTED', enabled: false, maxRetries: 1, infinite: false },
 ] as const
 
 /** 配置缺省值，供加载中、缺字段或旧配置防御式渲染。 */
 const DEFAULT_CONFIG: AutoRetryConfig = {
   enabled: true,
   notify: true,
+  infiniteRetry: false,
   rules: RULE_DEFINITIONS.map((rule) => ({ ...rule })),
   mainAgent: {
     requestRetry: true,
     autoContinue: true,
     continueDelayMs: 5000,
     maxConsecutive: 5,
+    infiniteContinue: false,
     continueMessage: '继续',
     idleWatchdog: false,
     idleTimeoutMs: 180000,
@@ -231,6 +239,12 @@ const ZH: Record<string, unknown> = {
   unavailable: '插件未启用或不可写',
   loading: '正在读取配置',
   triggerSection: '触发情况',
+  infiniteRetry: '无限重试',
+  infiniteRetryDesc: '开：忽略下方每项已勾选触发情况里设的次数（含填 0 的），只要命中已勾选的情况就一直重试，直到成功或你手动停止。关：按各项次数追加，勾了单条 ∞ 的规则各自无限。',
+  ruleInfinite: '∞',
+  ruleInfiniteHint: '本条无限重试：忽略右侧次数，命中即一直重试（全局无限重试开启时本项被忽略）。',
+  infiniteContinue: '无限连续失败',
+  infiniteContinueDesc: '开：取消连续失败熔断，任何终局失败都会持续自动继续（忽略左侧上限），直到回合成功或你手动停止/介入。风险：网络彻底断开或确定性失败时会每隔“继续前延迟”无限发继续。',
   mainAgent: '主智能体',
   subAgent: '子智能体',
   advanced: '高级',
@@ -266,21 +280,21 @@ const ZH: Record<string, unknown> = {
   saved: '已保存',
   saveFailed: '保存失败，请重试。',
   'rules.RATE_LIMIT.label': '限流（429）',
-  'rules.RATE_LIMIT.hint': '请求过于频繁/配额限流；内置默认已重试 5 次，此处为追加。（可填 0~20 的整数）',
+  'rules.RATE_LIMIT.hint': '请求过于频繁/配额限流；内置默认已重试 5 次，此处为追加。（建议 0~20，可填更多；勾 ∞ 则无限）',
   'rules.SERVER.label': '服务端错误（5xx）',
-  'rules.SERVER.hint': '上游 5xx、过载；内置默认已重试，此处为追加。（可填 0~20 的整数）',
+  'rules.SERVER.hint': '上游 5xx、过载；内置默认已重试，此处为追加。（建议 0~20，可填更多；勾 ∞ 则无限）',
   'rules.TIMEOUT.label': '响应超时',
-  'rules.TIMEOUT.hint': '连接建立但流空闲超时；内置默认已重试，此处为追加。（可填 0~20 的整数）',
+  'rules.TIMEOUT.hint': '连接建立但流空闲超时；内置默认已重试，此处为追加。（建议 0~20，可填更多；勾 ∞ 则无限）',
   'rules.EMPTY_RESPONSE.label': '空响应',
-  'rules.EMPTY_RESPONSE.hint': '模型正常结束但零内容；内置默认已重试，此处为追加。（可填 0~20 的整数）',
+  'rules.EMPTY_RESPONSE.hint': '模型正常结束但零内容；内置默认已重试，此处为追加。（建议 0~20，可填更多；勾 ∞ 则无限）',
   'rules.TRANSPORT.label': '网络传输错误',
-  'rules.TRANSPORT.hint': '连接中断、SSE 断开、DNS 等网络层故障；内置默认已重试，此处为追加。（可填 0~20 的整数）',
+  'rules.TRANSPORT.hint': '连接中断、SSE 断开、DNS 等网络层故障；内置默认已重试，此处为追加。（建议 0~20，可填更多；勾 ∞ 则无限）',
   'rules.UNKNOWN.label': '未知错误',
-  'rules.UNKNOWN.hint': '无法归类的失败（网络差时常见）；内置默认不重试，此处为首次重试。（可填 0~20 的整数）',
+  'rules.UNKNOWN.hint': '无法归类的失败（网络差时常见）；内置默认不重试，此处为首次重试。（建议 0~20，可填更多；勾 ∞ 则无限）',
   'rules.HTTP_4XX.label': '其他 HTTP 4xx',
-  'rules.HTTP_4XX.hint': '404/408 等未单列的客户端错误（匹配 HTTP_ 前缀）。（可填 0~20 的整数）',
+  'rules.HTTP_4XX.hint': '404/408 等未单列的客户端错误（匹配 HTTP_ 前缀）。（建议 0~20，可填更多；勾 ∞ 则无限）',
   'rules.ABORTED.label': '请求中断',
-  'rules.ABORTED.hint': '含用户手动停止与看门狗取消；勾选后手动停止也会重试，慎选。（可填 0~20 的整数）',
+  'rules.ABORTED.hint': '含用户手动停止与看门狗取消；勾选后手动停止也会重试，慎选。（建议 0~20，可填更多；勾 ∞ 则无限）',
   continueOnMaxTokens: '截断自动继续',
   continueOnMaxTokensHint: '输出因 max-tokens 被截断时自动发继续；连续截断同样计入熔断上限。',
   continueOnMaxTokensDesc: '开：输出因长度被截断时自动发继续接着写。关：截断即停（连续截断计入熔断上限，防止无限续写）。',
@@ -405,6 +419,12 @@ const EN: Record<string, unknown> = {
   unavailable: 'Plugin is disabled or read-only',
   loading: 'Loading configuration',
   triggerSection: 'Trigger cases',
+  infiniteRetry: 'Infinite retry',
+  infiniteRetryDesc: 'On: ignore the counts set in each checked trigger case below (including those set to 0) and keep retrying any checked case until it succeeds or you stop manually. Off: add retries per the counts, and cases ticked with ∞ retry without limit on their own.',
+  ruleInfinite: '∞',
+  ruleInfiniteHint: 'Infinite retry for this case: ignore the count on the right and keep retrying when matched (overridden when the global infinite retry is on).',
+  infiniteContinue: 'Infinite consecutive failures',
+  infiniteContinueDesc: 'On: disable the consecutive-failure fuse and keep auto-continuing every terminal failure (ignoring the limit on the left) until a turn succeeds or you stop/intervene. Risk: with the network fully down or a deterministic failure this keeps sending "continue" once per delay forever.',
   mainAgent: 'Main agent',
   subAgent: 'Sub-agent',
   advanced: 'Advanced',
@@ -426,21 +446,21 @@ const EN: Record<string, unknown> = {
   saved: 'Saved',
   saveFailed: 'Save failed. Please try again.',
   'rules.RATE_LIMIT.label': 'Rate limit (429)',
-  'rules.RATE_LIMIT.hint': 'Requests too frequent or quota limited; built-in retry already tried 5 times, so this is additive. (Allowed: integer 0–20)',
+  'rules.RATE_LIMIT.hint': 'Requests too frequent or quota limited; built-in retry already tried 5 times, so this is additive. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   'rules.SERVER.label': 'Server error (5xx)',
-  'rules.SERVER.hint': 'Upstream 5xx or overload; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
+  'rules.SERVER.hint': 'Upstream 5xx or overload; built-in retry already tried, so this is additive. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   'rules.TIMEOUT.label': 'Response timeout',
-  'rules.TIMEOUT.hint': 'Connection established but the stream was idle; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
+  'rules.TIMEOUT.hint': 'Connection established but the stream was idle; built-in retry already tried, so this is additive. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   'rules.EMPTY_RESPONSE.label': 'Empty response',
-  'rules.EMPTY_RESPONSE.hint': 'The model ended normally without content; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
+  'rules.EMPTY_RESPONSE.hint': 'The model ended normally without content; built-in retry already tried, so this is additive. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   'rules.TRANSPORT.label': 'Transport error',
-  'rules.TRANSPORT.hint': 'Connection reset, SSE disconnect, DNS, or another network-layer failure; built-in retry already tried, so this is additive. (Allowed: integer 0–20)',
+  'rules.TRANSPORT.hint': 'Connection reset, SSE disconnect, DNS, or another network-layer failure; built-in retry already tried, so this is additive. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   'rules.UNKNOWN.label': 'Unknown error',
-  'rules.UNKNOWN.hint': 'An uncategorized failure, common on unstable networks; built-in retry does not retry this by default, so this is the first retry. (Allowed: integer 0–20)',
+  'rules.UNKNOWN.hint': 'An uncategorized failure, common on unstable networks; built-in retry does not retry this by default, so this is the first retry. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   'rules.HTTP_4XX.label': 'Other HTTP 4xx',
-  'rules.HTTP_4XX.hint': 'Client errors such as 404/408 not listed separately; matches the HTTP_ prefix. (Allowed: integer 0–20)',
+  'rules.HTTP_4XX.hint': 'Client errors such as 404/408 not listed separately; matches the HTTP_ prefix. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   'rules.ABORTED.label': 'Request aborted',
-  'rules.ABORTED.hint': 'Includes manual stops and watchdog cancellation; selecting this also retries manual stops, so use with care. (Allowed: integer 0–20)',
+  'rules.ABORTED.hint': 'Includes manual stops and watchdog cancellation; selecting this also retries manual stops, so use with care. (Suggested 0–20; higher allowed, or tick ∞ for unlimited)',
   continueOnMaxTokens: 'Continue after truncation',
   continueOnMaxTokensHint: 'Automatically continue when output is truncated by max-tokens; consecutive truncations count toward the fuse limit.',
   intervalMode: 'Interval mode',
@@ -599,6 +619,11 @@ const STYLES = `
 .dshar-rule-row:first-of-type { border-top: 0; padding-top: 0; }
 .dshar-rule-name { min-width: 0; }
 .dshar-rule-hint { min-width: 0; }
+/* 规则行右侧控制区：单条 ∞ 开关 + 次数输入 */
+.dshar-rule-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.dshar-rule-infinite { display: flex; align-items: center; gap: 5px; opacity: .8; }
+.dshar-rule-infinite-label { font-size: 14px; font-weight: 600; line-height: 1; }
+.dshar-rule-infinite-on { color: var(--dsw-alias-info-fg, #5b9cf6); opacity: 1; }
 .dshar-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dshar-field-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .dshar-field-label > span:first-child { font-size: 13px; font-weight: 500; }
@@ -685,6 +710,11 @@ function cloneConfig(config: AutoRetryConfig): AutoRetryConfig {
   return JSON.parse(JSON.stringify(config)) as AutoRetryConfig
 }
 
+/** 触发次数输入框的软上限：取消 20 硬约束（20 仅作建议），仅防呆地拦截极端天文数字。 */
+const RETRY_FIELD_CEILING = 99_999
+/** host 以有限大数哨兵广播无限重试的 maxRetries；UI 达到此量级时显示 ∞。 */
+const INFINITE_DISPLAY_THRESHOLD = 100_000
+
 /** 防御式读取配置，并按契约规则顺序补全缺失字段。 */
 function normalizeConfig(value: AutoRetryConfig | undefined): AutoRetryConfig {
   const source = value ?? DEFAULT_CONFIG
@@ -694,18 +724,21 @@ function normalizeConfig(value: AutoRetryConfig | undefined): AutoRetryConfig {
     return {
       code: definition.code,
       enabled: typeof found?.enabled === 'boolean' ? found.enabled : definition.enabled,
-      maxRetries: clampInteger(found?.maxRetries, 0, 20, definition.maxRetries),
+      maxRetries: clampInteger(found?.maxRetries, 0, RETRY_FIELD_CEILING, definition.maxRetries),
+      infinite: typeof found?.infinite === 'boolean' ? found.infinite : definition.infinite,
     }
   })
   return {
     enabled: typeof source.enabled === 'boolean' ? source.enabled : DEFAULT_CONFIG.enabled,
     notify: typeof source.notify === 'boolean' ? source.notify : DEFAULT_CONFIG.notify,
+    infiniteRetry: typeof source.infiniteRetry === 'boolean' ? source.infiniteRetry : DEFAULT_CONFIG.infiniteRetry,
     rules,
     mainAgent: {
       requestRetry: typeof source.mainAgent?.requestRetry === 'boolean' ? source.mainAgent.requestRetry : DEFAULT_CONFIG.mainAgent.requestRetry,
       autoContinue: typeof source.mainAgent?.autoContinue === 'boolean' ? source.mainAgent.autoContinue : DEFAULT_CONFIG.mainAgent.autoContinue,
       continueDelayMs: clampInteger(source.mainAgent?.continueDelayMs, 0, 600000, DEFAULT_CONFIG.mainAgent.continueDelayMs),
       maxConsecutive: clampInteger(source.mainAgent?.maxConsecutive, 1, 50, DEFAULT_CONFIG.mainAgent.maxConsecutive),
+      infiniteContinue: typeof source.mainAgent?.infiniteContinue === 'boolean' ? source.mainAgent.infiniteContinue : DEFAULT_CONFIG.mainAgent.infiniteContinue,
       continueMessage: typeof source.mainAgent?.continueMessage === 'string' ? source.mainAgent.continueMessage : DEFAULT_CONFIG.mainAgent.continueMessage,
       idleWatchdog: typeof source.mainAgent?.idleWatchdog === 'boolean' ? source.mainAgent.idleWatchdog : DEFAULT_CONFIG.mainAgent.idleWatchdog,
       idleTimeoutMs: clampInteger(source.mainAgent?.idleTimeoutMs, 30000, 600000, DEFAULT_CONFIG.mainAgent.idleTimeoutMs),
@@ -890,6 +923,12 @@ function displayNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+/** 将重试上限转成展示文本：达到无限哨兵量级显示 ∞。 */
+function formatRetryLimit(maxRetries: unknown): string {
+  if (typeof maxRetries !== 'number' || !Number.isFinite(maxRetries)) return '—'
+  return maxRetries >= INFINITE_DISPLAY_THRESHOLD ? '∞' : String(Math.round(maxRetries))
+}
+
 /** 将模板文案中的占位符替换为实际值。 */
 function formatMessage(message: string, values: Record<string, string | number>): string {
   return Object.entries(values).reduce((result, [key, value]) => result.replace(`{${key}}`, String(value)), message)
@@ -967,14 +1006,17 @@ function RuleRow({
   rule,
   t,
   disabled,
+  globalInfinite,
   onChange,
 }: {
   rule: RetryRule
   t: (key: string) => string
   disabled: boolean
+  globalInfinite: boolean
   onChange: (patch: Partial<RetryRule>) => void
 }) {
   const tooltip = t(`tooltip.${rule.code}`)
+  const infiniteActive = globalInfinite || rule.infinite
   return (
     <div className="dshar-rule-row" title={tooltip}>
       <Checkbox
@@ -985,19 +1027,34 @@ function RuleRow({
         disabled={disabled}
       />
       <span className="dshar-hint dshar-rule-hint">{t(`rules.${rule.code}.hint`)}</span>
-      <NumberInput
-        className="dshar-number"
-        min={0}
-        max={20}
-        step={1}
-        integer
-        value={rule.maxRetries}
-        title={tooltip}
-        ariaLabel={`${t(`rules.${rule.code}.label`)} ${t('retries')}`}
-        disabled={disabled || !rule.enabled}
-        t={t}
-        onChange={(maxRetries) => onChange({ maxRetries })}
-      />
+      <div className="dshar-rule-controls">
+        <span
+          className={rule.infinite || globalInfinite ? 'dshar-rule-infinite dshar-rule-infinite-on' : 'dshar-rule-infinite'}
+          title={t('ruleInfiniteHint')}
+        >
+          <span className="dshar-rule-infinite-label">{t('ruleInfinite')}</span>
+          <Switch
+            checked={infiniteActive}
+            onChange={(infinite) => onChange({ infinite })}
+            label={`${t(`rules.${rule.code}.label`)} ${t('ruleInfinite')}`}
+            title={t('ruleInfiniteHint')}
+            disabled={disabled || !rule.enabled || globalInfinite}
+          />
+        </span>
+        <NumberInput
+          className="dshar-number"
+          min={0}
+          max={RETRY_FIELD_CEILING}
+          step={1}
+          integer
+          value={rule.maxRetries}
+          title={tooltip}
+          ariaLabel={`${t(`rules.${rule.code}.label`)} ${t('retries')}`}
+          disabled={disabled || !rule.enabled || infiniteActive}
+          t={t}
+          onChange={(maxRetries) => onChange({ maxRetries })}
+        />
+      </div>
     </div>
   )
 }
@@ -1216,7 +1273,7 @@ function StatsDashboard({ t }: { t: (key: string) => string }) {
                 <table className="dshar-dashboard-table">
                   <thead><tr><th>{t('dashboardTime')}</th><th>{t('dashboardType')}</th><th>{t('dashboardAi')}</th><th>{t('dashboardCode')}</th><th>{t('dashboardAttempt')}</th><th>{t('dashboardSource')}</th><th>{t('dashboardDelay')}</th></tr></thead>
                   <tbody>{events.map((event, index) => {
-                    const attempt = event.attempt == null ? '—' : `${displayInteger(event.attempt)}/${displayInteger(event.maxRetries)}`
+                    const attempt = event.attempt == null ? '—' : `${displayInteger(event.attempt)}/${formatRetryLimit(event.maxRetries)}`
                     const delay = event.delayMs == null ? '—' : `${(displayNumber(event.delayMs) / 1000).toFixed(2)}${t('dashboardSeconds')}`
                     const ai = [event.provider, event.model].filter((value) => typeof value === 'string' && value).join(' / ')
                     return <tr key={`${String(event.ts)}-${String(event.kind)}-${index}`}><td>{formatEventTime(event.ts)}</td><td>{eventKindLabel(event.kind, t)}</td><td>{ai || '—'}</td><td>{typeof event.code === 'string' ? event.code : '—'}</td><td>{event.kind === 'retry' ? attempt : '—'}</td><td>{event.source === 'built-in' ? t('dashboardBuiltIn') : event.source === 'supplemental' ? t('dashboardSupplemental') : '—'}</td><td>{event.kind === 'retry' ? delay : '—'}</td></tr>
@@ -1292,7 +1349,7 @@ function toToastItem(event: NotifyEvent, id: number, t: (key: string) => string)
   const aiText = model ? `${event.provider ?? ''}/${model}`.replace(/^\//, '') : typeof event.provider === 'string' ? event.provider : ''
   if (event.kind === 'retry') {
     const attempt = typeof event.attempt === 'number' ? event.attempt : '?'
-    const maxRetries = typeof event.maxRetries === 'number' ? event.maxRetries : '?'
+    const maxRetries = formatRetryLimit(event.maxRetries)
     return { id, title: t('toastRetryTitle'), body: formatMessage(t('toastRetryBody'), { ai: aiText || '—', code: notifyCodeLabel(event.code), attempt, maxRetries }), tone: 'info' }
   }
   if (event.kind === 'continue') {
@@ -1344,7 +1401,7 @@ function toBannerItem(event: NotifyEvent, id: number, t: (key: string) => string
   const key = `${sessionId || 'unknown'}:${String(kind)}`
   if (kind === 'retry') {
     const attempt = typeof event.attempt === 'number' ? event.attempt : '?'
-    const maxRetries = typeof event.maxRetries === 'number' ? event.maxRetries : '?'
+    const maxRetries = formatRetryLimit(event.maxRetries)
     const source = event.source === 'built-in' ? t('bannerRetrySourceBuiltIn') : t('bannerRetrySourceSupplemental')
     const ai = [event.provider, event.model].filter((value) => typeof value === 'string' && value).join('/') || '—'
     return {
@@ -1534,7 +1591,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
     setSaveState('idle')
   }
 
-  /** 保存完整草稿；一次 mutate 原子写入五个顶层字段。 */
+  /** 保存完整草稿；一次 mutate 原子写入全部顶层 volatile 字段。 */
   const saveDraft = async () => {
     if (disabled || !dirty || saveState === 'saving') return
     setSaveState('saving')
@@ -1544,6 +1601,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
       const ok = await form.mutate([
         { op: 'set', path: ['enabled'], value: draft.enabled },
         { op: 'set', path: ['notify'], value: draft.notify },
+        { op: 'set', path: ['infiniteRetry'], value: draft.infiniteRetry },
         { op: 'set', path: ['rules'], value: draft.rules },
         { op: 'set', path: ['mainAgent'], value: draft.mainAgent },
         { op: 'set', path: ['subAgent'], value: draft.subAgent },
@@ -1624,8 +1682,19 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
 
       <div className="dshar-card">
         <h3 className="dshar-card-title">{t('triggerSection')}</h3>
+        <ToggleRow
+          label={t('infiniteRetry')}
+          desc={t('infiniteRetryDesc')}
+          checked={draft.infiniteRetry}
+          onChange={(infiniteRetry) => {
+            setDraft((current) => ({ ...current, infiniteRetry }))
+            setHasPendingDraft(true)
+            setSaveState('idle')
+          }}
+          disabled={disabled}
+        />
         {draft.rules.map((rule) => (
-          <RuleRow key={rule.code} rule={rule} t={t} disabled={disabled} onChange={(patch) => updateRule(rule.code, patch)} />
+          <RuleRow key={rule.code} rule={rule} t={t} disabled={disabled} globalInfinite={draft.infiniteRetry} onChange={(patch) => updateRule(rule.code, patch)} />
         ))}
       </div>
 
@@ -1687,7 +1756,7 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                 value={draft.mainAgent.maxConsecutive}
                 ariaLabel={t('maxConsecutive')}
                 title={t('tooltipMaxConsecutive')}
-                disabled={disabled}
+                disabled={disabled || draft.mainAgent.infiniteContinue}
                 t={t}
                 onChange={(maxConsecutive) => {
                   setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, maxConsecutive } }))
@@ -1696,6 +1765,17 @@ function AutoRetrySection({ t, form, describe }: { t: (key: string) => string; f
                 }}
               />
             </Field>
+            <ToggleRow
+              label={t('infiniteContinue')}
+              desc={t('infiniteContinueDesc')}
+              checked={draft.mainAgent.infiniteContinue}
+              onChange={(infiniteContinue) => {
+                setDraft((current) => ({ ...current, mainAgent: { ...current.mainAgent, infiniteContinue } }))
+                setHasPendingDraft(true)
+                setSaveState('idle')
+              }}
+              disabled={disabled}
+            />
             <Field label={t('continueMessage')} hint={t('continueMessageHint')}>
               <Input
                 className="dshar-text"

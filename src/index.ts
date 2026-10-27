@@ -80,6 +80,8 @@ interface RetryRule {
   code: string
   enabled: boolean
   maxRetries: number
+  /** 单条规则无限重试：忽略 maxRetries，命中即重试，直到成功或被取消。 */
+  infinite: boolean
 }
 
 /** volatile 配置访问器（cordis Volatile 的最小形状） */
@@ -95,12 +97,16 @@ interface Volatile<T> {
 interface HostConfig {
   enabled: boolean
   notify: boolean
+  /** 全局无限重试：忽略所有规则及规则内 infinite 设定，凡已勾选（含 maxRetries=0）即无限重试。 */
+  infiniteRetry: boolean
   rules: RetryRule[]
   mainAgent: {
     requestRetry: boolean
     autoContinue: boolean
     continueDelayMs: number
     maxConsecutive: number
+    /** 无限连续失败：取消自动继续的连续失败熔断。 */
+    infiniteContinue: boolean
     continueMessage: string
     idleWatchdog: boolean
     idleTimeoutMs: number
@@ -140,23 +146,27 @@ function unwrapDeep<T>(value: unknown): T {
  * 二、配置 schema（所有叶子字段 .volatile()：设置页只允许写 volatile 路径）
  * ============================================================ */
 
+/** 无限重试时写入 durable llm/retry 事件的 maxRetries 哨兵值。 */
+const INFINITE_SENTINEL = 1_000_000
+
 /** 触发情况默认清单（顺序固定，client UI 按此顺序渲染） */
 const DEFAULT_RULES: RetryRule[] = [
-  { code: 'RATE_LIMIT', enabled: true, maxRetries: 2 },
-  { code: 'SERVER', enabled: true, maxRetries: 2 },
-  { code: 'TIMEOUT', enabled: true, maxRetries: 2 },
-  { code: 'EMPTY_RESPONSE', enabled: true, maxRetries: 1 },
-  { code: 'TRANSPORT', enabled: true, maxRetries: 3 },
-  { code: 'UNKNOWN', enabled: true, maxRetries: 2 },
-  { code: 'HTTP_4XX', enabled: false, maxRetries: 1 },
-  { code: 'ABORTED', enabled: false, maxRetries: 1 },
+  { code: 'RATE_LIMIT', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'SERVER', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'TIMEOUT', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'EMPTY_RESPONSE', enabled: true, maxRetries: 1, infinite: false },
+  { code: 'TRANSPORT', enabled: true, maxRetries: 3, infinite: false },
+  { code: 'UNKNOWN', enabled: true, maxRetries: 2, infinite: false },
+  { code: 'HTTP_4XX', enabled: false, maxRetries: 1, infinite: false },
+  { code: 'ABORTED', enabled: false, maxRetries: 1, infinite: false },
 ]
 
-/** 单条规则 schema */
+/** 单条规则 schema：maxRetries 不设硬上限（20 仅作为 UI 建议），infinite 为单条无限重试。 */
 const ruleSchema = Schema.object({
   code: Schema.string().required(),
   enabled: Schema.boolean().default(false),
-  maxRetries: Schema.number().step(1).min(0).max(20).default(1),
+  maxRetries: Schema.number().step(1).min(0).default(1),
+  infinite: Schema.boolean().default(false),
 })
 
 /** 插件配置 schema。
@@ -168,6 +178,8 @@ export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile(),
   // 实时通知：重试/继续/看门狗事件推送到 Web UI 右上角弹窗
   notify: Schema.boolean().default(true).volatile(),
+  // 全局无限重试：开启后忽略所有勾选规则的 maxRetries（含 0），命中即重试
+  infiniteRetry: Schema.boolean().default(false).volatile(),
   // 触发情况清单（client 端整组读写）
   rules: Schema.array(ruleSchema).default(DEFAULT_RULES).volatile(),
   // 主智能体（整组 volatile）
@@ -176,6 +188,8 @@ export const Config = Schema.object({
     autoContinue: Schema.boolean().default(true),
     continueDelayMs: Schema.number().step(1).min(0).max(600_000).default(5_000),
     maxConsecutive: Schema.number().step(1).min(1).max(50).default(5),
+    // 无限连续失败：开启后取消熔断，任何终局失败都持续自动继续
+    infiniteContinue: Schema.boolean().default(false),
     continueMessage: Schema.string().default('继续'),
     idleWatchdog: Schema.boolean().default(false),
     idleTimeoutMs: Schema.number().step(1).min(30_000).max(600_000).default(180_000),
@@ -457,8 +471,13 @@ export function apply(ctx: any, config: unknown): void {
       const failure = payload.failure ?? {}
       const code = failure.code ?? 'UNKNOWN'
       const rule = matchRule(conf.rules, code)
-      // 无规则 / 未勾选 / 次数为 0 → 委托下游
-      if (!rule || !rule.enabled || rule.maxRetries <= 0) return delegate()
+      // 无规则 / 未勾选 → 委托下游（勾选即纳入；无限模式下 maxRetries=0 也会重试）
+      if (!rule || !rule.enabled) return delegate()
+      // 生效上限：全局无限或本条无限 → 有限大数哨兵（守会话链不变量）；否则用配置次数
+      const infinite = conf.infiniteRetry === true || rule.infinite === true
+      const limit = infinite ? INFINITE_SENTINEL : rule.maxRetries
+      // 非无限且次数为 0 → 委托下游
+      if (!infinite && limit <= 0) return delegate()
 
       // 主/子智能体分别开关
       const sub = isSubagent(payload.agent)
@@ -479,10 +498,10 @@ export function apply(ctx: any, config: unknown): void {
       chainKey = `chain:${payload.step}:${payload.provider}`
       used = bucket.get(rule.code) ?? 0
       const attempt = (bucket.get(chainKey) ?? 0) + 1
-      if (used >= rule.maxRetries || attempt > rule.maxRetries) {
+      if (used >= limit || attempt > limit) {
         // 预算尽（跨 step 共享）或链内连续重试已达上限（同 step 换错误码会累计）→ 放行终局。
         // 链容量闸门保证 durable 事件 retry ≤ maxRetries，否则加载器拒绝整份会话历史。
-        log.info('补充重试不再继续（%s 预算已用 %d 次，链内将第 %d 次），放行终局', code, used, attempt)
+        log.info('补充重试不再继续（%s 预算已用 %d 次，链内将第 %d 次，上限 %s），放行终局', code, used, attempt, infinite ? '∞' : limit)
         return delegate()
       }
       bucket.set(rule.code, used + 1)
@@ -511,12 +530,12 @@ export function apply(ctx: any, config: unknown): void {
         mode: 'normal',
         policyKey: 'auto-retry',
         retry: attempt,
-        maxRetries: rule.maxRetries,
+        maxRetries: limit,
         delayMs,
         failure,
       })
       scheduled = true
-      log.info('计划补充重试：%s（链内第 %d 次，%s 预算已用 %d/%d），%d ms 后重发', code, attempt, rule.code, used + 1, rule.maxRetries, delayMs)
+      log.info('计划补充重试：%s（链内第 %d 次，%s 预算已用 %d/%s），%d ms 后重发', code, attempt, rule.code, used + 1, infinite ? '∞' : limit, delayMs)
 
       // 等待期间被取消 → 放弃接管，失败走终局（可能由自动继续层接手）
       if (!await cancellableDelay(delayMs, payload.signal, lifetime.signal)) {
@@ -665,10 +684,11 @@ export function apply(ctx: any, config: unknown): void {
     const conf = cfg()
     if (!conf.enabled || !conf.mainAgent.autoContinue) return
 
-    // 连续失败熔断：达到上限后停止，warn 提示；回合成功后自动清零恢复
+    // 连续失败熔断：达到上限后停止，warn 提示；回合成功后自动清零恢复。
+    // 开启无限连续失败时取消熔断，仅靠成功回合与手动介入刹车。
     const streak = continueStreaks.get(sessionId) ?? 0
     const maxConsecutive = conf.mainAgent.maxConsecutive
-    if (streak >= maxConsecutive) {
+    if (!conf.mainAgent.infiniteContinue && streak >= maxConsecutive) {
       log.warn('会话 %s 已连续失败 %d 次（上限 %d），停止自动继续', sessionId.slice(0, 8), streak, maxConsecutive)
       // 熔断状态只推送给实时 UI，不记录为一次统计事件。
       notifyOnly({ ts: Date.now(), kind: 'fuse-stopped', sessionId, code: errorCode, streak, maxConsecutive })
